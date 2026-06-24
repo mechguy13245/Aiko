@@ -9,6 +9,7 @@ import {
   AtSign,
   ChevronLeft,
   Grid2x2Plus,
+  Sparkles,
 } from "lucide-react";
 import { Input } from "./input";
 import { cn } from "@/lib/utils";
@@ -68,57 +69,56 @@ export function AuthPage() {
   };
 
   return (
-    <main className="relative md:h-screen md:overflow-hidden lg:grid lg:grid-cols-2">
-      <div className="bg-muted/60 relative hidden h-full flex-col border-r p-10 lg:flex">
-        <div className="from-background absolute inset-0 z-10 bg-gradient-to-t to-transparent" />
-        <div className="z-10 flex items-center gap-2">
-          <Grid2x2Plus className="size-6" />
-          <p className="text-xl font-semibold">Asme</p>
+    <main className="relative min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 lg:grid lg:grid-cols-2 overflow-hidden">
+      {/* Decorative blurred background blobs */}
+      <div className="absolute inset-0 opacity-20 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/30 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative hidden h-full flex-col border-r border-slate-800/40 p-10 lg:flex z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/10">
+            <Sparkles className="w-4.5 h-4.5 text-slate-900" />
+          </div>
+          <p className="text-xl font-light text-slate-100 tracking-wide">Aiko</p>
         </div>
-        <div className="z-10 mt-auto">
-          <blockquote className="space-y-2">
-            <p className="text-xl">
-              &ldquo;This Platform has helped me to save time and serve my
-              clients faster than ever before.&rdquo;
+        <div className="mt-auto max-w-md">
+          <blockquote className="space-y-4">
+            <p className="text-2xl font-light text-slate-200 leading-relaxed">
+              &ldquo;Aiko has helped me explore who I am beyond grades, giving me a private space to reflect on what truly matters.&rdquo;
             </p>
-            <footer className="font-mono text-sm font-semibold">
-              ~ Ali Hassan
+            <footer className="font-mono text-xs font-semibold text-amber-400/80 uppercase tracking-widest">
+              ~ Aiko Explorer
             </footer>
           </blockquote>
         </div>
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 -z-10">
           <FloatingPaths position={1} />
           <FloatingPaths position={-1} />
         </div>
       </div>
-      <div className="relative flex min-h-screen flex-col justify-center p-4">
-        <div
-          aria-hidden
-          className="absolute inset-0 isolate contain-strict -z-10 opacity-60"
-        >
-          <div className="bg-[radial-gradient(68.54%_68.72%_at_55.02%_31.46%,--theme(--color-foreground/.06)_0,hsla(0,0%,55%,.02)_50%,--theme(--color-foreground/.01)_80%)] absolute top-0 right-0 h-320 w-140 -translate-y-87.5 rounded-full" />
-          <div className="bg-[radial-gradient(50%_50%_at_50%_50%,--theme(--color-foreground/.04)_0,--theme(--color-foreground/.01)_80%,transparent_100%)] absolute top-0 right-0 h-320 w-60 [translate:5%_-50%] rounded-full" />
-          <div className="bg-[radial-gradient(50%_50%_at_50%_50%,--theme(--color-foreground/.04)_0,--theme(--color-foreground/.01)_80%,transparent_100%)] absolute top-0 right-0 h-320 w-60 -translate-y-87.5 rounded-full" />
-        </div>
-
-        <div className="mx-auto space-y-4 sm:w-sm">
-          <div className="flex items-center gap-2 lg:hidden">
-            <Grid2x2Plus className="size-6" />
-            <p className="text-xl font-semibold">Asme</p>
+      <div className="relative flex min-h-screen flex-col justify-center p-6 z-10">
+        <div className="mx-auto w-full sm:max-w-[400px] bg-slate-900/50 border border-slate-700/30 backdrop-blur-md rounded-3xl p-8 shadow-2xl space-y-6">
+          <div className="flex items-center gap-3 lg:hidden">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/10">
+              <Sparkles className="w-4.5 h-4.5 text-slate-900" />
+            </div>
+            <p className="text-xl font-light text-slate-100 tracking-wide">Aiko</p>
           </div>
-          <div className="flex flex-col space-y-1">
-            <h1 className="font-heading text-2xl font-bold tracking-wide">
+          <div className="flex flex-col space-y-2">
+            <h1 className="text-3xl font-light text-slate-100 tracking-tight">
               Sign In or Join Now!
             </h1>
-            <p className="text-muted-foreground text-base">
-              login or create your asme account.
+            <p className="text-slate-400 text-sm">
+              Log in or create your Aiko account.
             </p>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <Button
               type="button"
               size="lg"
-              className="w-full cursor-pointer"
+              className="w-full cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700/50 rounded-xl transition-all hover:scale-[1.01]"
               onClick={() => handleOAuthLogin("google")}
             >
               <GoogleIcon className="size-4 me-2" />
@@ -127,7 +127,7 @@ export function AuthPage() {
             <Button
               type="button"
               size="lg"
-              className="w-full cursor-pointer"
+              className="w-full cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700/50 rounded-xl transition-all hover:scale-[1.01]"
               onClick={() => handleOAuthLogin("apple")}
             >
               <AppleIcon className="size-4 me-2" />
@@ -136,7 +136,7 @@ export function AuthPage() {
             <Button
               type="button"
               size="lg"
-              className="w-full cursor-pointer"
+              className="w-full cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700/50 rounded-xl transition-all hover:scale-[1.01]"
               onClick={() => handleOAuthLogin("github")}
             >
               <GithubIcon className="size-4 me-2" />
@@ -146,26 +146,30 @@ export function AuthPage() {
 
           <AuthSeparator />
 
-          <form onSubmit={handleEmailLogin} className="space-y-2">
-            <p className="text-muted-foreground text-start text-xs">
+          <form onSubmit={handleEmailLogin} className="space-y-4">
+            <p className="text-slate-400 text-xs">
               Enter your email address to sign in or create an account
             </p>
             <div className="relative h-max">
               <Input
                 placeholder="your.email@example.com"
-                className="peer ps-9"
+                className="peer ps-9 bg-slate-950/40 border-slate-800 focus:border-amber-400/50 text-slate-200 placeholder:text-slate-650 rounded-xl"
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={loading}
               />
-              <div className="text-muted-foreground pointer-events-none absolute inset-y-0 start-0 flex items-center justify-center ps-3 peer-disabled:opacity-50">
+              <div className="text-slate-500 pointer-events-none absolute inset-y-0 start-0 flex items-center justify-center ps-3 peer-disabled:opacity-50">
                 <AtSign className="size-4" aria-hidden="true" />
               </div>
             </div>
 
-            <Button type="submit" disabled={loading} className="w-full cursor-pointer">
+            <Button 
+              type="submit" 
+              disabled={loading} 
+              className="w-full cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-medium rounded-xl transition-all hover:scale-[1.01]"
+            >
               <span>{loading ? "Sending link..." : "Continue With Email"}</span>
             </Button>
           </form>
@@ -173,7 +177,7 @@ export function AuthPage() {
           {message && (
             <div
               className={cn(
-                "p-3 rounded-lg text-xs text-center border",
+                "p-3 rounded-xl text-xs text-center border",
                 messageType === "success"
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                   : "bg-rose-500/10 text-rose-400 border-rose-500/20"
@@ -183,18 +187,18 @@ export function AuthPage() {
             </div>
           )}
 
-          <p className="text-muted-foreground mt-8 text-sm">
+          <p className="text-slate-500 text-xs leading-relaxed pt-2">
             By clicking continue, you agree to our{" "}
             <a
               href="#"
-              className="hover:text-primary underline underline-offset-4"
+              className="hover:text-amber-400 text-slate-400 underline underline-offset-4"
             >
               Terms of Service
             </a>{" "}
             and{" "}
             <a
               href="#"
-              className="hover:text-primary underline underline-offset-4"
+              className="hover:text-amber-400 text-slate-400 underline underline-offset-4"
             >
               Privacy Policy
             </a>
@@ -290,10 +294,10 @@ const GithubIcon = (props: React.ComponentProps<"svg">) => (
 
 const AuthSeparator = () => {
   return (
-    <div className="flex w-full items-center justify-center">
-      <div className="bg-border h-px w-full" />
-      <span className="text-muted-foreground px-2 text-xs">OR</span>
-      <div className="bg-border h-px w-full" />
+    <div className="flex w-full items-center justify-center my-2">
+      <div className="bg-slate-800 h-px w-full" />
+      <span className="text-slate-500 px-2 text-[10px] uppercase font-mono tracking-wider">OR</span>
+      <div className="bg-slate-800 h-px w-full" />
     </div>
   );
 };
