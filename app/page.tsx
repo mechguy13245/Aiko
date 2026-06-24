@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   let todoList: { id: number; name: string }[] = [];
   let fetchError = false;
+  let errorMessage = "";
 
   try {
     const cookieStore = await cookies();
@@ -21,12 +22,14 @@ export default async function Page() {
     if (error) {
       console.error("Failed to fetch todos via Supabase:", error);
       fetchError = true;
+      errorMessage = error.message;
     } else {
       todoList = (data as { id: number; name: string }[]) || [];
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Unexpected error fetching todos:", error);
     fetchError = true;
+    errorMessage = error?.message || "An unexpected error occurred.";
   }
 
   return (
@@ -59,8 +62,13 @@ export default async function Page() {
           {fetchError ? (
             <div className="text-center py-6 space-y-2 border border-rose-500/20 bg-rose-500/5 rounded-2xl p-4">
               <p className="text-rose-400 text-sm">Failed to connect to Supabase.</p>
+              {errorMessage && (
+                <p className="text-xs text-rose-300 font-mono bg-rose-950/40 p-2 rounded border border-rose-900/30 break-words">
+                  {errorMessage}
+                </p>
+              )}
               <p className="text-xs text-slate-500">
-                Please double check your Supabase environment variables.
+                Please check your Supabase environment variables and table schema.
               </p>
             </div>
           ) : todoList.length > 0 ? (
