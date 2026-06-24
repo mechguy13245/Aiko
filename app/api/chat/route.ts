@@ -1,10 +1,12 @@
 import { openai } from "@ai-sdk/openai";
 import { propagateAttributes } from "@langfuse/tracing";
-import { generateText, streamText, type ModelMessage } from "ai";
+import { generateObject, generateText, streamText, type ModelMessage } from "ai";
 import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { buildSystemPrompt, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
+import { profileSchema } from "@/lib/aiko/profile";
+import { upsertSession } from "@/lib/aiko/persist";
 import { langfuseSpanProcessor } from "@/instrumentation";
 
 export const maxDuration = 30;
@@ -13,6 +15,33 @@ interface ChatRequestBody {
   ageBand: string;
   sessionId: string;
   messages: { role: "user" | "assistant"; content: string }[];
+}
+
+async function extractProfile(
+  ageBand: string,
+  sessionId: string,
+  userId: string,
+  transcript: { role: "user" | "assistant"; content: string }[],
+) {
+  return propagateAttributes(
+    {
+      traceName: "aiko-profile-extraction",
+      sessionId,
+      userId,
+      tags: ["aiko", `age-${ageBand}`, "profile-extraction"],
+    },
+    async () => {
+      const { object } = await generateObject({
+        model: openai("gpt-4o-mini"),
+        schema: profileSchema,
+        system:
+          "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a short strengths-based profile. Be warm, specific, and avoid generic statements. Never diagnose or use clinical language.",
+        prompt: `Conversation transcript:\n\n${transcript.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
+        experimental_telemetry: { isEnabled: true },
+      });
+      return object;
+    },
+  );
 }
 
 export async function POST(request: Request) {
@@ -91,6 +120,26 @@ export async function POST(request: Request) {
           ).text;
         }
 
+        const transcript = [...messages, { role: "assistant" as const, content: text }];
+
+        try {
+          const profile = await extractProfile(ageBand, sessionId, user.id, transcript);
+          await upsertSession({
+            sessionId,
+            userId: user.id,
+            ageBand,
+            transcript,
+            profile,
+            completed: true,
+          });
+        } catch (err) {
+          console.error("Profile extraction or persistence failed:", err);
+          // Still persist the transcript even if extraction failed.
+          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, completed: true }).catch(
+            (persistErr) => console.error("Transcript persistence also failed:", persistErr),
+          );
+        }
+
         return new NextResponse(text, {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
@@ -101,6 +150,14 @@ export async function POST(request: Request) {
         system,
         messages: modelMessages,
         experimental_telemetry: { isEnabled: true },
+        onFinish: async (finalResult) => {
+          const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
+          try {
+            await upsertSession({ sessionId, userId: user.id, ageBand, transcript });
+          } catch (err) {
+            console.error("Transcript persistence failed:", err);
+          }
+        },
       });
 
       return result.toTextStreamResponse();

@@ -15,6 +15,13 @@
       "when": 1782323449564,
       "tag": "0001_lethal_argent",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782331041360,
+      "tag": "0002_bumpy_shen",
+      "breakpoints": true
     }
   ]
 }
