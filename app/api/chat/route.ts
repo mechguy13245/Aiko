@@ -32,7 +32,7 @@ async function extractProfile(
     },
     async () => {
       const { object } = await generateObject({
-        model: openai("gpt-4o-mini"),
+        model: openai("gpt-5.4-mini"),
         schema: profileSchema,
         system:
           "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a short strengths-based profile. Be warm, specific, and avoid generic statements. Never diagnose or use clinical language.",
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
       if (closingTurn) {
         let text = (
           await generateText({
-            model: openai("gpt-4o-mini"),
+            model: openai("gpt-5.4-mini"),
             system,
             messages: modelMessages,
             experimental_telemetry: { isEnabled: true },
@@ -112,7 +112,7 @@ export async function POST(request: Request) {
         if (text.includes("?")) {
           text = (
             await generateText({
-              model: openai("gpt-4o-mini"),
+              model: openai("gpt-5.4-mini"),
               system: `${system}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
               messages: modelMessages,
               experimental_telemetry: { isEnabled: true },
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
       }
 
       const result = streamText({
-        model: openai("gpt-4o-mini"),
+        model: openai("gpt-5.4-mini"),
         system,
         messages: modelMessages,
         experimental_telemetry: { isEnabled: true },
