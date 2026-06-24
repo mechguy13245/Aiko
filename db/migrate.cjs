@@ -1,8 +1,39 @@
 const { drizzle } = require("drizzle-orm/postgres-js");
 const { migrate } = require("drizzle-orm/postgres-js/migrator");
 const postgres = require("postgres");
+const fs = require("fs");
+const path = require("path");
 
-const connectionString = process.env.DATABASE_URL;
+// Simple local env loader
+function loadEnv() {
+  const envPath = path.resolve(__dirname, "../.env.local");
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, "utf-8");
+    content.split("\n").forEach((line) => {
+      const match = line.match(/^\s*([^#=]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1].trim();
+        let value = (match[2] || "").trim();
+        if (value.startsWith('"') && value.endsWith('"')) {
+          value = value.slice(1, -1);
+        } else if (value.startsWith("'") && value.endsWith("'")) {
+          value = value.slice(1, -1);
+        }
+        if (!process.env[key]) {
+          process.env[key] = value;
+        }
+      }
+    });
+  }
+}
+
+loadEnv();
+
+let connectionString = process.env.DATABASE_URL;
+
+if (connectionString) {
+  connectionString = connectionString.replace(/^["']|["']$/g, "").trim();
+}
 
 async function main() {
   if (!connectionString) {

@@ -1,8 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+let supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+let supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+if (supabaseUrl) supabaseUrl = supabaseUrl.replace(/^["']|["']$/g, "").trim();
+if (supabaseKey) supabaseKey = supabaseKey.replace(/^["']|["']$/g, "").trim();
 
 export const createClient = (cookieStore: Awaited<ReturnType<typeof cookies>>) => {
   if (!supabaseUrl || !supabaseKey) {
