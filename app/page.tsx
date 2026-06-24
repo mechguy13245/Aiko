@@ -1,11 +1,11 @@
-import { db } from "@/db";
-import { todos } from "@/db/schema";
+import { createClient } from "@/utils/supabase/server";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { Sparkles, CheckCircle2 } from "lucide-react";
 
 export const metadata = {
-  title: "Drizzle Todo Integration Showcase",
-  description: "Viewing data loaded server-side from PostgreSQL via Drizzle ORM inside our Next.js application.",
+  title: "Supabase Todo Integration Showcase",
+  description: "Viewing data loaded server-side from Supabase client inside our Next.js application.",
 };
 
 export default async function Page() {
@@ -13,10 +13,17 @@ export default async function Page() {
   let fetchError = false;
 
   try {
-    // Fetch todos using Drizzle ORM
-    todoList = await db.select().from(todos);
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+    const { data, error } = await supabase.from("todos").select("id, name");
+    if (error) {
+      console.error("Failed to fetch todos via Supabase:", error);
+      fetchError = true;
+    } else {
+      todoList = (data as { id: number; name: string }[]) || [];
+    }
   } catch (error) {
-    console.error("Failed to fetch todos via Drizzle:", error);
+    console.error("Unexpected error fetching todos:", error);
     fetchError = true;
   }
 
@@ -34,8 +41,8 @@ export default async function Page() {
               <Sparkles className="w-5 h-5 text-slate-100" />
             </div>
             <div>
-              <h1 className="text-xl font-light text-slate-100 tracking-wide">Drizzle Todos</h1>
-              <p className="text-xs text-slate-400">PostgreSQL ORM fetching</p>
+              <h1 className="text-xl font-light text-slate-100 tracking-wide">Supabase Todos</h1>
+              <p className="text-xs text-slate-400">Supabase Next client fetching</p>
             </div>
           </div>
           <Link
@@ -49,30 +56,30 @@ export default async function Page() {
         <div className="space-y-4">
           {fetchError ? (
             <div className="text-center py-6 space-y-2 border border-rose-500/20 bg-rose-500/5 rounded-2xl p-4">
-              <p className="text-rose-400 text-sm">Failed to connect to database.</p>
+              <p className="text-rose-400 text-sm">Failed to connect to Supabase.</p>
               <p className="text-xs text-slate-500">
-                Please double check the connection string in your `.env.local` file.
+                Please double check your Supabase environment variables.
               </p>
             </div>
           ) : todoList.length > 0 ? (
             <ul className="divide-y divide-slate-800/40">
               {todoList.map((todo) => (
                 <li key={todo.id} className="flex items-center gap-3 py-3.5 text-slate-200">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                   <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
                   <span className="text-sm font-light leading-relaxed">{todo.name}</span>
                 </li>
               ))}
             </ul>
           ) : (
             <div className="text-center py-8 space-y-2">
-              <p className="text-slate-400 text-sm">No todos returned from the database.</p>
-              <p className="text-xs text-slate-600">Make sure you have a `todos` table with `id` and `name` columns.</p>
+              <p className="text-slate-400 text-sm">No todos returned from Supabase.</p>
+              <p className="text-xs text-slate-600">Make sure you have a `todos` table in your Supabase database.</p>
             </div>
           )}
         </div>
 
         <div className="text-center text-[10px] text-slate-500 font-mono pt-4 border-t border-slate-800/40">
-          Connected using Drizzle ORM
+          Connected using Supabase Next Client
         </div>
       </div>
     </div>
