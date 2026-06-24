@@ -2,6 +2,9 @@ import { db } from "@/db";
 import { todos } from "@/db/schema";
 import Link from "next/link";
 import { Sparkles, CheckCircle2 } from "lucide-react";
+import { createClient } from "@/utils/supabase/server";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Drizzle Todo Integration Showcase",
@@ -11,6 +14,14 @@ export const metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
+  async function handleLogout() {
+    "use server";
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+    await supabase.auth.signOut();
+    redirect("/auth");
+  }
+
   let todoList: { id: number; name: string }[] = [];
   let fetchError = false;
   let errorMessage = "";
@@ -41,12 +52,22 @@ export default async function Page() {
               <p className="text-xs text-slate-400">PostgreSQL ORM fetching</p>
             </div>
           </div>
-          <Link
-            href="/chat"
-            className="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/50 rounded-xl transition-all hover:scale-[1.02]"
-          >
-            Launch Chat →
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/chat"
+              className="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/50 rounded-xl transition-all hover:scale-[1.02]"
+            >
+              Launch Chat →
+            </Link>
+            <form action={handleLogout}>
+              <button
+                type="submit"
+                className="text-xs px-4 py-2 bg-rose-950/40 hover:bg-rose-900/40 text-rose-300 border border-rose-900/30 rounded-xl transition-all hover:scale-[1.02] cursor-pointer"
+              >
+                Sign Out
+              </button>
+            </form>
+          </div>
         </div>
 
         <div className="space-y-4">

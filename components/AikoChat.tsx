@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowUp, Sparkles } from "lucide-react";
+import { createClient } from "@/utils/supabase/client";
 
 // Utility function
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
@@ -209,13 +210,21 @@ const InsightCard: React.FC<{ insight: Insight }> = ({ insight }) => (
   </motion.div>
 );
 
-const AgePickerCard: React.FC<{ ageRange: string; onClick: () => void }> = ({ ageRange, onClick }) => (
+const AgePickerCard: React.FC<{ ageRange: string; isSaved?: boolean; onClick: () => void }> = ({ ageRange, isSaved, onClick }) => (
   <motion.button
     whileHover={{ scale: 1.03, y: -4 }}
     whileTap={{ scale: 0.98 }}
     onClick={onClick}
-    className="bg-slate-800/40 hover:bg-slate-800/60 border border-slate-700/50 hover:border-amber-400/30 rounded-2xl p-8 transition-all cursor-pointer"
+    className={cn(
+      "bg-slate-800/40 hover:bg-slate-800/60 border rounded-2xl p-8 transition-all cursor-pointer relative overflow-hidden",
+      isSaved ? "border-amber-400/80 shadow-[0_0_15px_rgba(251,191,36,0.15)]" : "border-slate-700/50 hover:border-amber-400/30"
+    )}
   >
+    {isSaved && (
+      <div className="absolute top-2 right-2 bg-amber-400/20 text-amber-300 text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-400/30 font-mono">
+        Saved
+      </div>
+    )}
     <div className="text-2xl font-light text-slate-100">{ageRange}</div>
   </motion.button>
 );
@@ -232,6 +241,38 @@ export const AikoChat = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [savedAge, setSavedAge] = useState<string | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    async function loadProfile() {
+      try {
+        const res = await fetch("/api/class-range");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.classRange) {
+            setSavedAge(data.classRange);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load profile:", err);
+      } finally {
+        setLoadingProfile(false);
+      }
+    }
+    loadProfile();
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = "/auth";
+    } catch (err) {
+      console.error("Sign out failed:", err);
+    }
+  };
+
   const conversationData = selectedAge ? conversationsByAge[selectedAge] : null;
   const currentQuestion = conversationData?.questions[currentQuestionIndex];
 
@@ -246,9 +287,22 @@ export const AikoChat = () => {
     }
   }, [userInput]);
 
-  const startConversation = (age: string) => {
+  const startConversation = async (age: string) => {
     setSelectedAge(age);
     setScreen("chat");
+
+    try {
+      await fetch("/api/class-range", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ classRange: age }),
+      });
+    } catch (err) {
+      console.error("Failed to save class range:", err);
+    }
+
     setTimeout(() => {
       askQuestion(0, age);
     }, 800);
@@ -309,6 +363,12 @@ export const AikoChat = () => {
   if (screen === "landing") {
     return (
       <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex items-center justify-center p-6 relative overflow-hidden">
+        <button
+          onClick={handleSignOut}
+          className="absolute top-6 right-6 text-xs px-3.5 py-1.5 bg-slate-900/60 hover:bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-800/85 rounded-xl transition-all cursor-pointer z-20"
+        >
+          Sign Out
+        </button>
         <div className="absolute inset-0 opacity-20">
           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/30 rounded-full blur-3xl" />
           <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl" />
@@ -351,9 +411,9 @@ export const AikoChat = () => {
           >
             <p className="text-slate-500 text-sm uppercase tracking-wider">Choose your age</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <AgePickerCard ageRange="5–8" onClick={() => startConversation("5-8")} />
-              <AgePickerCard ageRange="9–12" onClick={() => startConversation("9-12")} />
-              <AgePickerCard ageRange="13–18" onClick={() => startConversation("13-18")} />
+              <AgePickerCard ageRange="5–8" isSaved={savedAge === "5-8"} onClick={() => startConversation("5-8")} />
+              <AgePickerCard ageRange="9–12" isSaved={savedAge === "9-12"} onClick={() => startConversation("9-12")} />
+              <AgePickerCard ageRange="13–18" isSaved={savedAge === "13-18"} onClick={() => startConversation("13-18")} />
             </div>
           </motion.div>
         </div>
@@ -431,12 +491,20 @@ export const AikoChat = () => {
               <p className="text-xs text-slate-500">listening</p>
             </div>
           </div>
-          {conversationData && (
-            <ProgressIndicator
-              current={currentQuestionIndex + 1}
-              total={conversationData.questions.length}
-            />
-          )}
+          <div className="flex items-center gap-4">
+            {conversationData && (
+              <ProgressIndicator
+                current={currentQuestionIndex + 1}
+                total={conversationData.questions.length}
+              />
+            )}
+            <button
+              onClick={handleSignOut}
+              className="text-xs px-3.5 py-1.5 bg-slate-900/60 hover:bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-800/80 rounded-xl transition-all cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 

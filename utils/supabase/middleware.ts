@@ -43,10 +43,48 @@ export const createClient = async (request: NextRequest) => {
   );
 
   // Refresh session if needed
+  let user = null;
   try {
-    await supabase.auth.getUser();
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
   } catch (error) {
     // Ignore errors here to avoid blocking requests if Supabase fails
+  }
+
+  const url = new URL(request.url);
+
+  // If user is not logged in and not on /auth, redirect to /auth
+  if (!user && url.pathname !== "/auth" && url.pathname !== "/auth/callback") {
+    const redirectResponse = NextResponse.redirect(new URL("/auth", request.url));
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie.name, cookie.value, {
+        path: cookie.path,
+        domain: cookie.domain,
+        maxAge: cookie.maxAge,
+        expires: cookie.expires,
+        sameSite: cookie.sameSite,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly,
+      });
+    });
+    return redirectResponse;
+  }
+
+  // If user is logged in and visits /auth, redirect to /
+  if (user && url.pathname === "/auth") {
+    const redirectResponse = NextResponse.redirect(new URL("/", request.url));
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie.name, cookie.value, {
+        path: cookie.path,
+        domain: cookie.domain,
+        maxAge: cookie.maxAge,
+        expires: cookie.expires,
+        sameSite: cookie.sameSite,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly,
+      });
+    });
+    return redirectResponse;
   }
 
   return supabaseResponse;
