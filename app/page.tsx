@@ -8,6 +8,8 @@ export const metadata = {
   description: "Viewing data loaded server-side from Supabase client inside our Next.js application.",
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function Page() {
   let todoList: { id: number; name: string }[] = [];
   let fetchError = false;
