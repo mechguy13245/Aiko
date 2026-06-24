@@ -1,6 +1,6 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
+const { drizzle } = require("drizzle-orm/postgres-js");
+const { migrate } = require("drizzle-orm/postgres-js/migrator");
+const postgres = require("postgres");
 
 const connectionString = process.env.DATABASE_URL;
 
