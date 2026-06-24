@@ -6,6 +6,7 @@ import { ArrowUp, Sparkles } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import {
   AgeBand,
+  computeActProgress,
   getActCount,
   isAgeBand,
   isClosingTurn,
@@ -101,15 +102,24 @@ export const AikoChat = () => {
 
   const [savedAge, setSavedAge] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
+  // React Strict Mode (dev only) double-invokes effects on mount; without this
+  // guard the profile fetch (and the session it kicks off) fires twice.
+  const loadProfileRanRef = useRef(false);
 
   useEffect(() => {
+    if (loadProfileRanRef.current) return;
+    loadProfileRanRef.current = true;
+
     async function loadProfile() {
       try {
         const res = await fetch("/api/class-range");
         if (res.ok) {
           const data = await res.json();
-          if (data.classRange) {
+          if (data.classRange && isAgeBand(data.classRange)) {
             setSavedAge(data.classRange);
+            setSelectedAge(data.classRange);
+            setSessionId(crypto.randomUUID());
+            setScreen("chat");
           }
         }
       } catch (err) {
@@ -131,9 +141,10 @@ export const AikoChat = () => {
     }
   };
 
-  const userTurnCount = messages.filter((m) => m.role === "user").length;
   const actCount = selectedAge ? getActCount(selectedAge) : 0;
-  const currentActDisplay = Math.min(userTurnCount + 1, actCount);
+  const currentActDisplay = selectedAge
+    ? Math.min(computeActProgress(selectedAge, messages).actIndex + 1, actCount)
+    : 0;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -150,8 +161,7 @@ export const AikoChat = () => {
     setIsStreaming(true);
     setErrorText("");
 
-    const nextUserTurnCount = history.filter((m) => m.role === "user").length;
-    const willClose = isClosingTurn(ageBand, nextUserTurnCount);
+    const willClose = isClosingTurn(ageBand, computeActProgress(ageBand, history).actIndex);
 
     try {
       const res = await fetch("/api/chat", {
@@ -199,6 +209,22 @@ export const AikoChat = () => {
     }
   };
 
+  // Guards against React Strict Mode's double effect invocation firing the
+  // opening message twice for the same session (which raced two parallel
+  // conversations against the same sessionId and skewed act progression).
+  const openingFiredForSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (screen === "chat" && selectedAge && sessionId && messages.length === 0) {
+      if (openingFiredForSessionRef.current === sessionId) return;
+      openingFiredForSessionRef.current = sessionId;
+      // Kicks off Aiko's opening message for this conversation; intentionally
+      // fires a network request rather than just syncing local state.
+      sendToAiko(selectedAge, sessionId, []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, selectedAge, sessionId]);
+
   const startConversation = async (age: string) => {
     if (!isAgeBand(age)) return;
     const sid = crypto.randomUUID();
@@ -216,8 +242,9 @@ export const AikoChat = () => {
     } catch (err) {
       console.error("Failed to save class range:", err);
     }
-
-    await sendToAiko(age, sid, []);
+    // The opening message is kicked off by the effect that watches
+    // screen/selectedAge/sessionId, so both a fresh pick and a resumed
+    // saved age band go through the same single code path.
   };
 
   const handleSend = async () => {

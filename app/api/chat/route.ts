@@ -4,7 +4,7 @@ import { generateObject, generateText, streamText, type ModelMessage } from "ai"
 import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
-import { buildSystemPrompt, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
+import { buildSystemPrompt, computeActProgress, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
 import { profileSchema } from "@/lib/aiko/profile";
 import { upsertSession } from "@/lib/aiko/persist";
 import { langfuseSpanProcessor } from "@/instrumentation";
@@ -74,9 +74,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages must be an array" }, { status: 400 });
   }
 
-  const userTurnCount = messages.filter((m) => m.role === "user").length;
-  const system = buildSystemPrompt(ageBand, userTurnCount);
-  const closingTurn = isClosingTurn(ageBand, userTurnCount);
+  const progress = computeActProgress(ageBand, messages);
+  const system = buildSystemPrompt(ageBand, progress);
+  const closingTurn = isClosingTurn(ageBand, progress.actIndex);
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({
     role: m.role,
@@ -94,7 +94,11 @@ export async function POST(request: Request) {
       traceName: "aiko-chat-turn",
       sessionId,
       userId: user.id,
-      tags: ["aiko", `age-${ageBand}`, closingTurn ? "closing-turn" : "act-turn"],
+      tags: [
+        "aiko",
+        `age-${ageBand}`,
+        closingTurn ? "closing-turn" : progress.justNudged ? "nudge-turn" : "act-turn",
+      ],
     },
     async () => {
       // The closing turn must never ask a question. Models occasionally slip a
