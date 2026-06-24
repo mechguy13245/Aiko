@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { aikoSessions } from "@/db/schema";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AgeBand } from "@/lib/aiko/conversation";
 import type { Profile } from "@/lib/aiko/profile";
 
@@ -44,4 +44,10 @@ export async function upsertSession({
         ...(completed ? { completedAt: sql`now()` } : {}),
       },
     });
+}
+
+export async function getCompletedSession(sessionId: string) {
+  const [row] = await db.select().from(aikoSessions).where(eq(aikoSessions.id, sessionId)).limit(1);
+  if (!row || !row.completedAt) return null;
+  return row;
 }

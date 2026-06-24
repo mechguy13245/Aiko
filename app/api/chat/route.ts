@@ -6,15 +6,32 @@ import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { buildSystemPrompt, computeActProgress, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
 import { profileSchema } from "@/lib/aiko/profile";
-import { upsertSession } from "@/lib/aiko/persist";
+import { getCompletedSession, upsertSession } from "@/lib/aiko/persist";
+import {
+  checkModeration,
+  FALLBACK_ACT_MESSAGE,
+  FALLBACK_CLOSING_MESSAGE,
+  CALM_REDIRECT_MESSAGE,
+  SELF_HARM_RESPONSE,
+} from "@/lib/aiko/moderation";
 import { langfuseSpanProcessor } from "@/instrumentation";
 
 export const maxDuration = 30;
+
+// Hard ceiling on raw message count per session. A real conversation never
+// gets close to this; it exists to bound cost/abuse from a client sending an
+// arbitrarily long fabricated history directly against the API.
+const MAX_MESSAGES = 60;
+const MODEL_TIMEOUT_MS = 20_000;
 
 interface ChatRequestBody {
   ageBand: string;
   sessionId: string;
   messages: { role: "user" | "assistant"; content: string }[];
+}
+
+function textResponse(text: string) {
+  return new NextResponse(text, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
 
 async function extractProfile(
@@ -38,6 +55,7 @@ async function extractProfile(
           "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a short strengths-based profile. Be warm, specific, and avoid generic statements. Never diagnose or use clinical language.",
         prompt: `Conversation transcript:\n\n${transcript.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
         experimental_telemetry: { isEnabled: true },
+        abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       });
       return object;
     },
@@ -74,9 +92,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages must be an array" }, { status: 400 });
   }
 
+  // Idempotent re-close: if this session already finished, replay the saved
+  // closing message instead of re-running the model (and re-billing) for
+  // every extra request a client might send after closing.
+  const existingCompleted = await getCompletedSession(sessionId).catch(() => null);
+  if (existingCompleted) {
+    const transcript = existingCompleted.transcript as { role: "user" | "assistant"; content: string }[];
+    const lastAssistantMessage = [...transcript].reverse().find((m) => m.role === "assistant");
+    return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE);
+  }
+
+  if (messages.length > MAX_MESSAGES) {
+    return textResponse(FALLBACK_CLOSING_MESSAGE);
+  }
+
   const progress = computeActProgress(ageBand, messages);
   const system = buildSystemPrompt(ageBand, progress);
   const closingTurn = isClosingTurn(ageBand, progress.actIndex);
+
+  const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  if (latestUserMessage) {
+    const moderation = await checkModeration(latestUserMessage.content);
+    if (moderation.selfHarm) {
+      return textResponse(SELF_HARM_RESPONSE);
+    }
+    if (moderation.flagged) {
+      return textResponse(CALM_REDIRECT_MESSAGE);
+    }
+  }
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({
     role: m.role,
@@ -104,24 +147,32 @@ export async function POST(request: Request) {
       // The closing turn must never ask a question. Models occasionally slip a
       // question in anyway, so generate up-front and retry once before replying.
       if (closingTurn) {
-        let text = (
-          await generateText({
-            model: openai("gpt-5.4-mini"),
-            system,
-            messages: modelMessages,
-            experimental_telemetry: { isEnabled: true },
-          })
-        ).text;
-
-        if (text.includes("?")) {
+        let text: string;
+        try {
           text = (
             await generateText({
               model: openai("gpt-5.4-mini"),
-              system: `${system}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
+              system,
               messages: modelMessages,
               experimental_telemetry: { isEnabled: true },
+              abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
             })
           ).text;
+
+          if (text.includes("?")) {
+            text = (
+              await generateText({
+                model: openai("gpt-5.4-mini"),
+                system: `${system}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
+                messages: modelMessages,
+                experimental_telemetry: { isEnabled: true },
+                abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+              })
+            ).text;
+          }
+        } catch (err) {
+          console.error("Closing turn generation failed:", err);
+          text = FALLBACK_CLOSING_MESSAGE;
         }
 
         const transcript = [...messages, { role: "assistant" as const, content: text }];
@@ -144,27 +195,34 @@ export async function POST(request: Request) {
           );
         }
 
-        return new NextResponse(text, {
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-        });
+        return textResponse(text);
       }
 
-      const result = streamText({
-        model: openai("gpt-5.4-mini"),
-        system,
-        messages: modelMessages,
-        experimental_telemetry: { isEnabled: true },
-        onFinish: async (finalResult) => {
-          const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
-          try {
-            await upsertSession({ sessionId, userId: user.id, ageBand, transcript });
-          } catch (err) {
-            console.error("Transcript persistence failed:", err);
-          }
-        },
-      });
+      try {
+        const result = streamText({
+          model: openai("gpt-5.4-mini"),
+          system,
+          messages: modelMessages,
+          experimental_telemetry: { isEnabled: true },
+          abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+          onFinish: async (finalResult) => {
+            const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
+            try {
+              await upsertSession({ sessionId, userId: user.id, ageBand, transcript });
+            } catch (err) {
+              console.error("Transcript persistence failed:", err);
+            }
+          },
+          onError: ({ error }) => {
+            console.error("Act turn streaming failed:", error);
+          },
+        });
 
-      return result.toTextStreamResponse();
+        return result.toTextStreamResponse();
+      } catch (err) {
+        console.error("Act turn generation failed to start:", err);
+        return textResponse(FALLBACK_ACT_MESSAGE);
+      }
     },
   );
 
