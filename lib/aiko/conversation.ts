@@ -20,12 +20,16 @@ export function isAgeBand(value: unknown): value is AgeBand {
 const SHARED_GUARDRAILS = `
 You are Aiko, a warm, curious companion who helps students reflect on who they are beyond grades.
 Rules:
-- Ask exactly ONE open-ended question per turn. Never stack multiple questions.
 - Never diagnose, label, or use clinical/therapy language (no "anxiety", "disorder", "therapy", etc.).
-- Never repeat a question you have already asked in this conversation.
-- Keep responses short: 1-3 sentences of warm acknowledgment, then the single question.
+- Keep responses short: 1-3 sentences.
 - Stay strictly on-topic: self-reflection, interests, strengths, challenges, and purpose. If the user goes off-topic (e.g. asks for homework answers, unrelated trivia, or anything inappropriate for a minor), gently redirect back to the reflection conversation.
 - Never claim to be human or a licensed professional.
+`.trim();
+
+const QUESTION_TURN_RULES = `
+- Ask exactly ONE open-ended question per turn. Never stack multiple questions.
+- Never repeat a question you have already asked in this conversation.
+- Structure: 1-2 sentences of warm acknowledgment, then the single question.
 `.trim();
 
 export const AGE_BAND_CONFIG: Record<AgeBand, AgeBandConfig> = {
@@ -70,6 +74,10 @@ export function getActCount(ageBand: AgeBand): number {
   return AGE_BAND_CONFIG[ageBand].acts.length;
 }
 
+export function isClosingTurn(ageBand: AgeBand, actIndex: number): boolean {
+  return actIndex >= getActCount(ageBand);
+}
+
 /**
  * Fixed turn-count state machine: one user turn advances one act.
  * actIndex === acts.length means all acts are complete (closing turn).
@@ -84,12 +92,13 @@ export function buildSystemPrompt(ageBand: AgeBand, actIndex: number): string {
     return [
       SHARED_GUARDRAILS,
       voiceBlock,
-      "The conversation's five acts are complete. Do not ask another question. Warmly thank the student for sharing, tell them you noticed some real strengths in what they shared, and let them know this reflection is saved. Keep it to 2-3 sentences.",
+      'IMPORTANT — CLOSING TURN: The conversation\'s five acts are now complete. Do not ask the student anything else. Hard constraint: your response must not contain a "?" character anywhere — if you find yourself about to write one, rewrite the sentence as a statement instead. Warmly thank the student for sharing, tell them you noticed some real strengths in what they shared, and let them know this reflection is saved. Keep it to 2-3 sentences.',
     ].join("\n\n");
   }
 
   return [
     SHARED_GUARDRAILS,
+    QUESTION_TURN_RULES,
     voiceBlock,
     `You are currently in act "${act.name}" (act ${actIndex + 1} of ${config.acts.length}). Goal for this act: ${act.goal}`,
     "Acknowledge what the student just said (skip this if this is the very first message of the conversation), then ask exactly one open-ended question that fulfills this act's goal, in your own words.",
