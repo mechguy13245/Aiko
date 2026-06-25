@@ -29,8 +29,17 @@ export async function checkModeration(text: string): Promise<ModerationResult> {
 }
 
 // Generic off-topic/inappropriate content: steer back to the reflection space.
+// Firm, no question — asking something right after redirecting signals softness.
 export const CALM_REDIRECT_MESSAGE =
-  "Let's keep this space for reflecting on you — your interests, strengths, and what matters to you. What's something you've been into lately?";
+  "This space is just for exploring who you are — your interests, strengths, and what makes you you. Let's keep it there.";
+
+// Second violation in a session: noticeably firmer, still no question.
+export const CALM_REDIRECT_ESCALATED_MESSAGE =
+  "I've already asked us to keep this focused. I'm here to talk about you — your strengths, interests, and what you're about. That's it.";
+
+// Third or more: close the session. No question, no invitation to continue.
+export const SESSION_PAUSED_MESSAGE =
+  "I'm going to close our chat here. Come back when you'd like to explore who you actually are.";
 
 // Self-harm signal: this is a real escalation case, not something to redirect
 // past. Point toward a trusted adult / real support rather than continuing

@@ -27,6 +27,8 @@ import {
   FALLBACK_ACT_MESSAGE,
   FALLBACK_CLOSING_MESSAGE,
   CALM_REDIRECT_MESSAGE,
+  CALM_REDIRECT_ESCALATED_MESSAGE,
+  SESSION_PAUSED_MESSAGE,
   SELF_HARM_RESPONSE,
 } from "@/lib/aiko/moderation";
 import { langfuseSpanProcessor } from "@/instrumentation";
@@ -150,7 +152,14 @@ export async function POST(request: Request) {
     if (latestUserMessage) {
       const moderation = await checkModeration(latestUserMessage.content);
       if (moderation.selfHarm) return textResponse(SELF_HARM_RESPONSE);
-      if (moderation.flagged) return textResponse(CALM_REDIRECT_MESSAGE);
+      if (moderation.flagged) {
+        const priorRedirects = messages.filter(
+          (m) => m.role === "assistant" && (m.content === CALM_REDIRECT_MESSAGE || m.content === CALM_REDIRECT_ESCALATED_MESSAGE),
+        ).length;
+        if (priorRedirects >= 2) return textResponse(SESSION_PAUSED_MESSAGE);
+        if (priorRedirects >= 1) return textResponse(CALM_REDIRECT_ESCALATED_MESSAGE);
+        return textResponse(CALM_REDIRECT_MESSAGE);
+      }
     }
 
     const system = buildPostClosingSystemPrompt(ageBand);
@@ -213,6 +222,13 @@ export async function POST(request: Request) {
       return textResponse(SELF_HARM_RESPONSE);
     }
     if (moderation.flagged) {
+      // Count prior redirect messages already in the client-sent history so we
+      // can escalate on repeat violations without a schema change.
+      const priorRedirects = messages.filter(
+        (m) => m.role === "assistant" && (m.content === CALM_REDIRECT_MESSAGE || m.content === CALM_REDIRECT_ESCALATED_MESSAGE),
+      ).length;
+      if (priorRedirects >= 2) return textResponse(SESSION_PAUSED_MESSAGE);
+      if (priorRedirects >= 1) return textResponse(CALM_REDIRECT_ESCALATED_MESSAGE);
       return textResponse(CALM_REDIRECT_MESSAGE);
     }
   }
@@ -261,7 +277,22 @@ export async function POST(request: Request) {
     }
   }
 
-  const system = buildSystemPrompt({ ageBand, state: nextState, nudge, deepen });
+  // Detect disengagement: 2+ consecutive user messages that are very short
+  // or pure filler. When this pattern is present, Aiko should react warmly
+  // and leave space — no question — rather than pushing harder.
+  const recentUserMessages = messages.filter((m) => m.role === "user").slice(-3);
+  const isFillerMessage = (text: string) => text.trim().length < 10 || /^(idk|idk\.|dunno|yeah|yep|nope|nah|ok|okay|lol|haha|hm+|hmm+|\.\.\.|no|yes|fine|sure|meh|uh|uhh|umm?)\.?$/i.test(text.trim());
+  const consecutiveFillerCount = (() => {
+    let count = 0;
+    for (const m of [...recentUserMessages].reverse()) {
+      if (isFillerMessage(m.content)) count++;
+      else break;
+    }
+    return count;
+  })();
+  const breathe = consecutiveFillerCount >= 2 && !nudge;
+
+  const system = buildSystemPrompt({ ageBand, state: nextState, nudge, deepen, breathe });
   const closingTurn = isClosingTurn(ageBand, nextState.actIndex);
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({

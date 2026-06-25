@@ -275,9 +275,12 @@ interface BuildPromptArgs {
    * territory before moving on — different in tone from a nudge: this is
    * "great, now tell me more," not "that didn't quite work." */
   deepen?: boolean;
+  /** Set when the student has sent multiple consecutive very short / filler
+   * replies. React warmly and leave space — no question this turn. */
+  breathe?: boolean;
 }
 
-export function buildSystemPrompt({ ageBand, state, nudge, deepen }: BuildPromptArgs): string {
+export function buildSystemPrompt({ ageBand, state, nudge, deepen, breathe }: BuildPromptArgs): string {
   const config = AGE_BAND_CONFIG[ageBand];
   const act = getAct(ageBand, state.actIndex);
 
@@ -337,13 +340,22 @@ export function buildSystemPrompt({ ageBand, state, nudge, deepen }: BuildPrompt
     ].join("\n\n");
   }
 
+  if (breathe) {
+    return [
+      SHARED_GUARDRAILS,
+      voiceBlock,
+      `You are on territory "${act.name}".`,
+      "BREATHE TURN: The student has sent several very short or one-word replies in a row. Do NOT ask another question this turn — hard rule, no question mark anywhere in your response. Just react to what they actually said: something short, specific, and warm. Acknowledge it, name what you noticed, or sit with it. Leave the space open without demanding more. You're being a presence, not a quiz.",
+    ].join("\n\n");
+  }
+
   if (deepen) {
     return [
       SHARED_GUARDRAILS,
       REACTION_PRINCIPLES,
       voiceBlock,
       `You are still on the territory "${act.name}" — the underlying question: "${act.topLevelQuestion}". What we actually need: ${act.successCriteria}`,
-      "Their last answer was genuine and on-topic, but it's only one word or one quick fact — not enough to actually know something specific about them yet. Don't move to the next territory. Warmly react to what they said, then ask a natural follow-up that digs into WHY, HOW, or what specifically about it — pull on the actual thread they gave you, don't ask a generic \"tell me more\". HARD RULE: do not offer a list of options to pick from (no \"is it A, B, or C\") — a multiple-choice question just invites another one-word pick, which defeats the entire point of this follow-up. Ask something they have to answer in their own words instead, even for a young child — e.g. \"what's your favorite part about that?\" rather than \"is it the moves, the planning, or winning?\".",
+      "Their last answer was genuine and on-topic but too brief to build a real profile signal from. Don't move to the next territory. React to what they specifically said, then ask ONE natural follow-up. CRITICAL PACING RULE: stay with the EXACT thing they named — if they said a specific show, character, or activity, ask something about THAT thing (what draws them to it, what they find cool about it) before asking what it means about them personally. Don't leap from \"what you like\" to \"what does that say about you\" in one turn — earn the abstraction by exploring the concrete thing first. HARD RULE: no pick-one list (no \"is it A, B, or C\") — ask something they have to answer in their own words.",
     ].join("\n\n");
   }
 
