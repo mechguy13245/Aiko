@@ -14,10 +14,18 @@ export interface JudgeResult {
 }
 
 /**
- * Cheap, fast judgment of whether the student's latest reply actually
- * satisfies what we need from the current act, rather than relying on a
- * word-count heuristic. Failing open (treated as satisfied) on any error so
- * a flaky judge call never blocks the conversation from progressing.
+ * Judgment of whether the student's latest reply actually satisfies what we
+ * need from the current act, rather than relying on a word-count heuristic.
+ * Failing open (treated as satisfied) on any error so a flaky judge call
+ * never blocks the conversation from progressing.
+ *
+ * Uses the full model, not mini: this is the one call in the pipeline where
+ * a wrong call is costly (a one-word non-answer silently advancing the
+ * conversation), and it's a contextual judgment — does this reply actually
+ * answer the specific question just asked — not a narrow classification
+ * task. It runs far less often than the conversational turn itself, so the
+ * cost delta is small relative to the accuracy gain. Conversational replies
+ * and profile extraction stay on mini; those are working well there.
  */
 export async function judgeReply(
   ageBand: AgeBand,
@@ -27,7 +35,7 @@ export async function judgeReply(
 ): Promise<JudgeResult> {
   try {
     const { object } = await generateObject({
-      model: openai("gpt-5.4-mini"),
+      model: openai("gpt-5.4"),
       schema: judgeSchema,
       system:
         `You judge a single reply from a student (age band ${ageBand}) in a reflective conversation. ` +
