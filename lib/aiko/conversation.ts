@@ -284,3 +284,20 @@ export function buildSystemPrompt({ ageBand, state, nudge }: BuildPromptArgs): s
     ...(summarizeNote ? [summarizeNote] : []),
   ].join("\n\n");
 }
+
+/**
+ * The structured 5-act reflection already ran and was saved. There's no
+ * "start over" and no second closing screen — the student just keeps
+ * talking to Aiko in the same thread. Free-form, no act goal to satisfy.
+ */
+export function buildPostClosingSystemPrompt(ageBand: AgeBand): string {
+  const config = AGE_BAND_CONFIG[ageBand];
+  const voiceBlock = `Persona for this age band: ${config.persona} (${ageBand}). Voice: ${config.voice}`;
+
+  return [
+    SHARED_GUARDRAILS,
+    REACTION_PRINCIPLES,
+    voiceBlock,
+    "The structured reflection already finished and was saved — there is no more act structure to follow and no fixed question to ask. Just keep talking with the student naturally: react to what they say, ask a genuine follow-up if you're curious, or just chat. You don't have to end every turn with a question.",
+  ].join("\n\n");
+}

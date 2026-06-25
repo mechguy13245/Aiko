@@ -83,12 +83,11 @@ const AgePickerCard: React.FC<{ ageRange: string; isSaved?: boolean; disabled?: 
 
 // Main Component
 export const AikoChat = () => {
-  const [screen, setScreen] = useState<"landing" | "chat" | "reflection">("landing");
+  const [screen, setScreen] = useState<"landing" | "chat">("landing");
   const [selectedAge, setSelectedAge] = useState<AgeBand | "">("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [userInput, setUserInput] = useState("");
-  const [closingText, setClosingText] = useState("");
   const [errorText, setErrorText] = useState("");
   const [actProgress, setActProgress] = useState<{ index: number; count: number } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -119,18 +118,8 @@ export const AikoChat = () => {
 
             const transcript = (existing.transcript ?? []) as { role: "user" | "assistant"; content: string }[];
             setActProgress({ index: existing.actIndex ?? 0, count: existing.actCount ?? 0 });
-            if (existing.completed) {
-              const lastAssistant = [...transcript].reverse().find((m) => m.role === "assistant");
-              setClosingText(lastAssistant?.content ?? "");
-              setScreen("reflection");
-            } else if (transcript.length > 0) {
-              setMessages(
-                transcript.map((m, i) => ({ id: `resumed-${i}`, role: m.role, content: m.content })),
-              );
-              setScreen("chat");
-            } else {
-              setScreen("chat");
-            }
+            setMessages(transcript.map((m, i) => ({ id: `resumed-${i}`, role: m.role, content: m.content })));
+            setScreen("chat");
           }
         }
       } catch (err) {
@@ -184,16 +173,10 @@ export const AikoChat = () => {
       const actIndex = Number(res.headers.get("X-Aiko-Act-Index") ?? "0");
       const actCount = Number(res.headers.get("X-Aiko-Act-Count") ?? "0");
       setActProgress({ index: actIndex, count: actCount });
-      const willClose = res.headers.get("X-Aiko-Closing") === "true";
 
-      if (willClose) {
-        const text = await res.text();
-        setClosingText(text);
-        setIsStreaming(false);
-        setTimeout(() => setScreen("reflection"), 600);
-        return;
-      }
-
+      // Every reply — including the closing message — is just another chat
+      // bubble in the same thread. There's no separate "reflection" screen
+      // and no "start over"; the conversation simply keeps going.
       const assistantId = `aiko-${Date.now()}`;
       setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
 
@@ -334,58 +317,6 @@ export const AikoChat = () => {
               <AgePickerCard ageRange="9–12" isSaved={savedAge === "9-12"} disabled={loadingProfile} onClick={() => startConversation("9-12")} />
               <AgePickerCard ageRange="13–18" isSaved={savedAge === "13-18"} disabled={loadingProfile} onClick={() => startConversation("13-18")} />
             </div>
-          </motion.div>
-        </div>
-      </div>
-    );
-  }
-
-  if (screen === "reflection") {
-    return (
-      <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-20">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/30 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl" />
-        </div>
-
-        <div className="relative z-10 max-w-2xl w-full space-y-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center space-y-4"
-          >
-            <h2 className="text-3xl font-light text-slate-100">Here&apos;s what I noticed</h2>
-            <p className="text-slate-400">These are just reflections, not judgments</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-slate-800/30 border border-slate-700/30 rounded-2xl p-6"
-          >
-            <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{closingText}</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="text-center space-y-6 pt-8"
-          >
-            <p className="text-slate-400 text-sm">
-              Come back anytime to keep exploring who you are
-            </p>
-            <button
-              onClick={() => {
-                setScreen("landing");
-                setMessages([]);
-                setSelectedAge("");
-                setClosingText("");
-              }}
-              className="px-6 py-3 bg-slate-800/40 hover:bg-slate-800/60 border border-slate-700/50 rounded-xl text-slate-200 transition-colors cursor-pointer"
-            >
-              Start over
-            </button>
           </motion.div>
         </div>
       </div>

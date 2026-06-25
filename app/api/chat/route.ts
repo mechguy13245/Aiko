@@ -5,6 +5,7 @@ import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import {
+  buildPostClosingSystemPrompt,
   buildSystemPrompt,
   getAct,
   getActCount,
@@ -16,8 +17,9 @@ import {
   type AgeBand,
   type ReplySituation,
 } from "@/lib/aiko/conversation";
+import type { TranscriptMessage } from "@/lib/aiko/persist";
 import { judgeReply } from "@/lib/aiko/judge";
-import { profileSchema } from "@/lib/aiko/profile";
+import { profileSchema, type Profile } from "@/lib/aiko/profile";
 import { getSession, upsertSession } from "@/lib/aiko/persist";
 import {
   checkModeration,
@@ -116,18 +118,80 @@ export async function POST(request: Request) {
 
   const existingSession = await getSession(sessionId).catch(() => null);
 
-  // Idempotent re-close: if this session already finished, replay the saved
-  // closing message instead of re-running the model (and re-billing) for
-  // every extra request a client might send after closing.
-  if (existingSession?.completedAt) {
-    const transcript = existingSession.transcript as { role: "user" | "assistant"; content: string }[];
-    const lastAssistantMessage = [...transcript].reverse().find((m) => m.role === "assistant");
-    const closedState = existingSession.state as ActState;
-    return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE, progressHeaders(ageBand, closedState, true));
-  }
-
   if (messages.length > MAX_MESSAGES) {
     return textResponse(FALLBACK_CLOSING_MESSAGE);
+  }
+
+  // The structured reflection already finished. There's no "start over" —
+  // the student just keeps talking to Aiko in the same thread. If the
+  // client hasn't sent anything new since the last persisted turn, this is
+  // just a reload/duplicate request: replay the saved message instead of
+  // re-running the model. Otherwise, continue the conversation naturally.
+  if (existingSession?.completedAt) {
+    const storedTranscript = existingSession.transcript as TranscriptMessage[];
+    const closedState = existingSession.state as ActState;
+
+    if (messages.length <= storedTranscript.length) {
+      const lastAssistantMessage = [...storedTranscript].reverse().find((m) => m.role === "assistant");
+      return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE, progressHeaders(ageBand, closedState, false));
+    }
+
+    const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    if (latestUserMessage) {
+      const moderation = await checkModeration(latestUserMessage.content);
+      if (moderation.selfHarm) return textResponse(SELF_HARM_RESPONSE);
+      if (moderation.flagged) return textResponse(CALM_REDIRECT_MESSAGE);
+    }
+
+    const system = buildPostClosingSystemPrompt(ageBand);
+    const modelMessages: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
+
+    const response = await propagateAttributes(
+      {
+        traceName: "aiko-chat-turn",
+        sessionId,
+        userId: user.id,
+        tags: ["aiko", `age-${ageBand}`, "post-closing-chat"],
+      },
+      async () => {
+        try {
+          const result = streamText({
+            model: openai("gpt-5.4-mini"),
+            system,
+            messages: modelMessages,
+            experimental_telemetry: { isEnabled: true },
+            abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+            onFinish: async (finalResult) => {
+              const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
+              try {
+                await upsertSession({
+                  sessionId,
+                  userId: user.id,
+                  ageBand,
+                  transcript,
+                  state: closedState,
+                  profile: (existingSession.profile as Profile | null) ?? undefined,
+                  completed: true,
+                });
+              } catch (err) {
+                console.error("Post-closing transcript persistence failed:", err);
+              }
+            },
+            onError: ({ error }) => {
+              console.error("Post-closing chat streaming failed:", error);
+            },
+          });
+
+          return result.toTextStreamResponse({ headers: progressHeaders(ageBand, closedState, false) });
+        } catch (err) {
+          console.error("Post-closing chat generation failed to start:", err);
+          return textResponse(FALLBACK_ACT_MESSAGE);
+        }
+      },
+    );
+
+    after(async () => await langfuseSpanProcessor.forceFlush());
+    return response;
   }
 
   const currentState: ActState = (existingSession?.state as ActState) ?? INITIAL_ACT_STATE;
