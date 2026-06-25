@@ -259,6 +259,20 @@ export const AikoChat = () => {
     await sendToAiko(selectedAge, sessionId, history);
   };
 
+  if (loadingProfile) {
+    return (
+      <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-20">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/30 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl" />
+        </div>
+        <div className="relative z-10 w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center animate-pulse">
+          <Sparkles className="w-5 h-5 text-slate-900" />
+        </div>
+      </div>
+    );
+  }
+
   if (screen === "landing") {
     return (
       <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex items-center justify-center p-6 relative overflow-hidden">
