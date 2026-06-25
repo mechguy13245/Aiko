@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { aikoSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import type { AgeBand } from "@/lib/aiko/conversation";
+import type { ActState, AgeBand } from "@/lib/aiko/conversation";
 import type { Profile } from "@/lib/aiko/profile";
 
 export interface TranscriptMessage {
@@ -14,6 +14,7 @@ interface UpsertSessionArgs {
   userId: string;
   ageBand: AgeBand;
   transcript: TranscriptMessage[];
+  state: ActState;
   profile?: Profile;
   completed: boolean;
 }
@@ -23,6 +24,7 @@ export async function upsertSession({
   userId,
   ageBand,
   transcript,
+  state,
   profile,
   completed,
 }: UpsertSessionArgs) {
@@ -34,6 +36,7 @@ export async function upsertSession({
       userId,
       ageBand,
       transcript,
+      state,
       profile: profile ?? null,
       completedAt,
     })
@@ -42,6 +45,7 @@ export async function upsertSession({
       set: {
         ageBand,
         transcript,
+        state,
         profile: profile ?? null,
         completedAt,
       },

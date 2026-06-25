@@ -1,0 +1,1 @@
+ALTER TABLE "aiko_sessions" ADD COLUMN "state" jsonb DEFAULT '{"actIndex":0,"nudgeCount":0}'::jsonb NOT NULL;

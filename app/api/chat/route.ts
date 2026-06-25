@@ -4,7 +4,19 @@ import { generateObject, generateText, streamText, type ModelMessage } from "ai"
 import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
-import { buildSystemPrompt, computeActProgress, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
+import {
+  buildSystemPrompt,
+  getAct,
+  getActCount,
+  isAgeBand,
+  isClosingTurn,
+  MAX_NUDGES_PER_ACT,
+  INITIAL_ACT_STATE,
+  type ActState,
+  type AgeBand,
+  type ReplySituation,
+} from "@/lib/aiko/conversation";
+import { judgeReply } from "@/lib/aiko/judge";
 import { profileSchema } from "@/lib/aiko/profile";
 import { getSession, upsertSession } from "@/lib/aiko/persist";
 import {
@@ -29,8 +41,16 @@ interface ChatRequestBody {
   messages: { role: "user" | "assistant"; content: string }[];
 }
 
-function textResponse(text: string) {
-  return new NextResponse(text, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+function textResponse(text: string, headers?: Record<string, string>) {
+  return new NextResponse(text, { headers: { "Content-Type": "text/plain; charset=utf-8", ...headers } });
+}
+
+function progressHeaders(ageBand: AgeBand, state: ActState, closing: boolean) {
+  return {
+    "X-Aiko-Closing": String(closing),
+    "X-Aiko-Act-Index": String(state.actIndex),
+    "X-Aiko-Act-Count": String(getActCount(ageBand)),
+  };
 }
 
 async function extractProfile(
@@ -94,25 +114,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages must be an array" }, { status: 400 });
   }
 
+  const existingSession = await getSession(sessionId).catch(() => null);
+
   // Idempotent re-close: if this session already finished, replay the saved
   // closing message instead of re-running the model (and re-billing) for
   // every extra request a client might send after closing.
-  const existingSession = await getSession(sessionId).catch(() => null);
   if (existingSession?.completedAt) {
     const transcript = existingSession.transcript as { role: "user" | "assistant"; content: string }[];
     const lastAssistantMessage = [...transcript].reverse().find((m) => m.role === "assistant");
-    return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE);
+    const closedState = existingSession.state as ActState;
+    return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE, progressHeaders(ageBand, closedState, true));
   }
 
   if (messages.length > MAX_MESSAGES) {
     return textResponse(FALLBACK_CLOSING_MESSAGE);
   }
 
-  const progress = computeActProgress(ageBand, messages);
-  const system = buildSystemPrompt(ageBand, progress);
-  const closingTurn = isClosingTurn(ageBand, progress.actIndex);
-
+  const currentState: ActState = (existingSession?.state as ActState) ?? INITIAL_ACT_STATE;
   const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
+
   if (latestUserMessage) {
     const moderation = await checkModeration(latestUserMessage.content);
     if (moderation.selfHarm) {
@@ -122,6 +142,32 @@ export async function POST(request: Request) {
       return textResponse(CALM_REDIRECT_MESSAGE);
     }
   }
+
+  // Judge whether the latest reply actually satisfies what this act needs,
+  // rather than assuming any non-empty reply is good enough. A reply that
+  // falls short earns a nudge (with an example on the second attempt)
+  // instead of silently advancing past it.
+  let nextState: ActState = currentState;
+  let nudge: { situation: ReplySituation } | undefined;
+
+  if (latestUserMessage) {
+    const act = getAct(ageBand, currentState.actIndex);
+    if (act) {
+      const judgment = await judgeReply(ageBand, act, messages.slice(0, -1), latestUserMessage.content);
+      if (judgment.satisfied) {
+        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0 };
+      } else if (currentState.nudgeCount < MAX_NUDGES_PER_ACT) {
+        nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1 };
+        nudge = { situation: judgment.situation };
+      } else {
+        // Already nudged the max number of times — move on rather than stall.
+        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0 };
+      }
+    }
+  }
+
+  const system = buildSystemPrompt({ ageBand, state: nextState, nudge });
+  const closingTurn = isClosingTurn(ageBand, nextState.actIndex);
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({
     role: m.role,
@@ -142,7 +188,7 @@ export async function POST(request: Request) {
       tags: [
         "aiko",
         `age-${ageBand}`,
-        closingTurn ? "closing-turn" : progress.justNudged ? "nudge-turn" : "act-turn",
+        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : "act-turn",
       ],
     },
     async () => {
@@ -186,18 +232,19 @@ export async function POST(request: Request) {
             userId: user.id,
             ageBand,
             transcript,
+            state: nextState,
             profile,
             completed: true,
           });
         } catch (err) {
           console.error("Profile extraction or persistence failed:", err);
           // Still persist the transcript even if extraction failed.
-          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, completed: true }).catch(
+          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: true }).catch(
             (persistErr) => console.error("Transcript persistence also failed:", persistErr),
           );
         }
 
-        return textResponse(text);
+        return textResponse(text, progressHeaders(ageBand, nextState, true));
       }
 
       try {
@@ -210,7 +257,7 @@ export async function POST(request: Request) {
           onFinish: async (finalResult) => {
             const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
             try {
-              await upsertSession({ sessionId, userId: user.id, ageBand, transcript, completed: false });
+              await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: false });
             } catch (err) {
               console.error("Transcript persistence failed:", err);
             }
@@ -220,7 +267,7 @@ export async function POST(request: Request) {
           },
         });
 
-        return result.toTextStreamResponse();
+        return result.toTextStreamResponse({ headers: progressHeaders(ageBand, nextState, false) });
       } catch (err) {
         console.error("Act turn generation failed to start:", err);
         return textResponse(FALLBACK_ACT_MESSAGE);

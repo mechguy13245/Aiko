@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import { getActCount, isAgeBand, type ActState } from "@/lib/aiko/conversation";
 import { getSession } from "@/lib/aiko/persist";
 
 export async function GET() {
@@ -19,11 +20,15 @@ export async function GET() {
     return NextResponse.json({ session: null });
   }
 
+  const state = session.state as ActState;
+
   return NextResponse.json({
     session: {
       ageBand: session.ageBand,
       transcript: session.transcript,
       completed: Boolean(session.completedAt),
+      actIndex: state?.actIndex ?? 0,
+      actCount: isAgeBand(session.ageBand) ? getActCount(session.ageBand) : 0,
     },
   });
 }

@@ -16,6 +16,7 @@ export const aikoSessions = pgTable("aiko_sessions", {
   userId: text("user_id").notNull(),
   ageBand: text("age_band").notNull(),
   transcript: jsonb("transcript").notNull().default([]),
+  state: jsonb("state").notNull().default({ actIndex: 0, nudgeCount: 0 }),
   profile: jsonb("profile"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),

@@ -4,13 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowUp, Sparkles } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
-import {
-  AgeBand,
-  computeActProgress,
-  getActCount,
-  isAgeBand,
-  isClosingTurn,
-} from "@/lib/aiko/conversation";
+import { AgeBand, isAgeBand } from "@/lib/aiko/conversation";
 
 // Utility function
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
@@ -96,6 +90,7 @@ export const AikoChat = () => {
   const [userInput, setUserInput] = useState("");
   const [closingText, setClosingText] = useState("");
   const [errorText, setErrorText] = useState("");
+  const [actProgress, setActProgress] = useState<{ index: number; count: number } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -123,6 +118,7 @@ export const AikoChat = () => {
             setSelectedAge(existing.ageBand);
 
             const transcript = (existing.transcript ?? []) as { role: "user" | "assistant"; content: string }[];
+            setActProgress({ index: existing.actIndex ?? 0, count: existing.actCount ?? 0 });
             if (existing.completed) {
               const lastAssistant = [...transcript].reverse().find((m) => m.role === "assistant");
               setClosingText(lastAssistant?.content ?? "");
@@ -156,11 +152,6 @@ export const AikoChat = () => {
     }
   };
 
-  const actCount = selectedAge ? getActCount(selectedAge) : 0;
-  const currentActDisplay = selectedAge
-    ? Math.min(computeActProgress(selectedAge, messages).actIndex + 1, actCount)
-    : 0;
-
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
@@ -176,8 +167,6 @@ export const AikoChat = () => {
     setIsStreaming(true);
     setErrorText("");
 
-    const willClose = isClosingTurn(ageBand, computeActProgress(ageBand, history).actIndex);
-
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -191,6 +180,11 @@ export const AikoChat = () => {
       if (!res.ok || !res.body) {
         throw new Error(`Request failed with status ${res.status}`);
       }
+
+      const actIndex = Number(res.headers.get("X-Aiko-Act-Index") ?? "0");
+      const actCount = Number(res.headers.get("X-Aiko-Act-Count") ?? "0");
+      setActProgress({ index: actIndex, count: actCount });
+      const willClose = res.headers.get("X-Aiko-Closing") === "true";
 
       if (willClose) {
         const text = await res.text();
@@ -417,8 +411,11 @@ export const AikoChat = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {actCount > 0 && (
-              <ProgressIndicator current={currentActDisplay} total={actCount} />
+            {actProgress && actProgress.count > 0 && (
+              <ProgressIndicator
+                current={Math.min(actProgress.index + 1, actProgress.count)}
+                total={actProgress.count}
+              />
             )}
             <button
               onClick={handleSignOut}
