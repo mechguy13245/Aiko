@@ -6,7 +6,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { buildSystemPrompt, computeActProgress, isAgeBand, isClosingTurn } from "@/lib/aiko/conversation";
 import { profileSchema } from "@/lib/aiko/profile";
-import { getCompletedSession, upsertSession } from "@/lib/aiko/persist";
+import { getSession, upsertSession } from "@/lib/aiko/persist";
 import {
   checkModeration,
   FALLBACK_ACT_MESSAGE,
@@ -26,7 +26,6 @@ const MODEL_TIMEOUT_MS = 20_000;
 
 interface ChatRequestBody {
   ageBand: string;
-  sessionId: string;
   messages: { role: "user" | "assistant"; content: string }[];
 }
 
@@ -80,13 +79,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { ageBand, sessionId, messages } = body;
+  const { ageBand, messages } = body;
+
+  // One persistent session per user — there is never more than one row per
+  // user in aikoSessions, so the user's id doubles as the session id. This
+  // means a returning user always resumes the same conversation rather than
+  // starting a fresh, disconnected one.
+  const sessionId = user.id;
 
   if (!isAgeBand(ageBand)) {
     return NextResponse.json({ error: "Invalid or missing ageBand" }, { status: 400 });
-  }
-  if (typeof sessionId !== "string" || !sessionId) {
-    return NextResponse.json({ error: "Invalid or missing sessionId" }, { status: 400 });
   }
   if (!Array.isArray(messages)) {
     return NextResponse.json({ error: "messages must be an array" }, { status: 400 });
@@ -95,9 +97,9 @@ export async function POST(request: Request) {
   // Idempotent re-close: if this session already finished, replay the saved
   // closing message instead of re-running the model (and re-billing) for
   // every extra request a client might send after closing.
-  const existingCompleted = await getCompletedSession(sessionId).catch(() => null);
-  if (existingCompleted) {
-    const transcript = existingCompleted.transcript as { role: "user" | "assistant"; content: string }[];
+  const existingSession = await getSession(sessionId).catch(() => null);
+  if (existingSession?.completedAt) {
+    const transcript = existingSession.transcript as { role: "user" | "assistant"; content: string }[];
     const lastAssistantMessage = [...transcript].reverse().find((m) => m.role === "assistant");
     return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE);
   }
@@ -208,7 +210,7 @@ export async function POST(request: Request) {
           onFinish: async (finalResult) => {
             const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
             try {
-              await upsertSession({ sessionId, userId: user.id, ageBand, transcript });
+              await upsertSession({ sessionId, userId: user.id, ageBand, transcript, completed: false });
             } catch (err) {
               console.error("Transcript persistence failed:", err);
             }

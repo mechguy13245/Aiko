@@ -1,0 +1,29 @@
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createClient } from "@/utils/supabase/server";
+import { getSession } from "@/lib/aiko/persist";
+
+export async function GET() {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const session = await getSession(user.id);
+  if (!session) {
+    return NextResponse.json({ session: null });
+  }
+
+  return NextResponse.json({
+    session: {
+      ageBand: session.ageBand,
+      transcript: session.transcript,
+      completed: Boolean(session.completedAt),
+    },
+  });
+}

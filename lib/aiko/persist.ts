@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { aikoSessions } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { AgeBand } from "@/lib/aiko/conversation";
 import type { Profile } from "@/lib/aiko/profile";
 
@@ -15,7 +15,7 @@ interface UpsertSessionArgs {
   ageBand: AgeBand;
   transcript: TranscriptMessage[];
   profile?: Profile;
-  completed?: boolean;
+  completed: boolean;
 }
 
 export async function upsertSession({
@@ -26,6 +26,7 @@ export async function upsertSession({
   profile,
   completed,
 }: UpsertSessionArgs) {
+  const completedAt = completed ? new Date() : null;
   await db
     .insert(aikoSessions)
     .values({
@@ -34,20 +35,20 @@ export async function upsertSession({
       ageBand,
       transcript,
       profile: profile ?? null,
-      completedAt: completed ? new Date() : null,
+      completedAt,
     })
     .onConflictDoUpdate({
       target: aikoSessions.id,
       set: {
+        ageBand,
         transcript,
-        ...(profile ? { profile } : {}),
-        ...(completed ? { completedAt: sql`now()` } : {}),
+        profile: profile ?? null,
+        completedAt,
       },
     });
 }
 
-export async function getCompletedSession(sessionId: string) {
+export async function getSession(sessionId: string) {
   const [row] = await db.select().from(aikoSessions).where(eq(aikoSessions.id, sessionId)).limit(1);
-  if (!row || !row.completedAt) return null;
-  return row;
+  return row ?? null;
 }
