@@ -30,7 +30,14 @@ export function isAgeBand(value: unknown): value is AgeBand {
   return typeof value === "string" && (AGE_BANDS as string[]).includes(value);
 }
 
-export const MAX_NUDGES_PER_ACT = 2;
+export const MAX_NUDGES_PER_ACT = 4;
+
+// A single valid, on-topic answer isn't enough signal for a real profile —
+// "sleeping" or "winning" might be completely genuine, but it's too thin to
+// build a specific, non-generic profile dimension from. Each territory (other
+// than Mirror, which is a confirmation, not an exploration) needs at least
+// this many genuinely good exchanges before moving on.
+export const MIN_SATISFACTORY_REPLIES_PER_ACT = 2;
 
 const SHARED_GUARDRAILS = `
 You are Aiko, a warm, curious companion who helps students reveal who they actually are — their real interests, strengths, and motivations — as distinct from who they perform to be for parents, teachers, and peers.
@@ -74,6 +81,7 @@ How to talk, structurally:
 const QUESTION_TURN_RULES = `
 - Ask exactly ONE open-ended question per turn. Never stack multiple questions.
 - Never repeat a question (or near-paraphrase of one) you've already asked in this conversation.
+- Avoid multiple-choice-style phrasing ("is it A, B, or C?") — it invites a one-word pick instead of their own words, and a one-word pick isn't enough to actually know something specific about them.
 `.trim();
 
 // The five territories every age tier covers, just with different framing,
@@ -245,9 +253,17 @@ export type ReplySituation = "satisfactory" | "vague" | "off-topic" | "confused"
 export interface ActState {
   actIndex: number;
   nudgeCount: number;
+  /** How many genuinely good (judged-satisfied) replies we've collected for
+   * the current territory. Needs to reach MIN_SATISFACTORY_REPLIES_PER_ACT
+   * before advancing — a single good answer isn't enough depth. */
+  satisfiedCount: number;
 }
 
-export const INITIAL_ACT_STATE: ActState = { actIndex: 0, nudgeCount: 0 };
+export const INITIAL_ACT_STATE: ActState = { actIndex: 0, nudgeCount: 0, satisfiedCount: 0 };
+
+export function minRepliesFor(act: ConversationAct): number {
+  return act.isMirror ? 1 : MIN_SATISFACTORY_REPLIES_PER_ACT;
+}
 
 interface BuildPromptArgs {
   ageBand: AgeBand;
@@ -255,9 +271,13 @@ interface BuildPromptArgs {
   /** Set when this turn is responding to a judged reply that didn't meet the
    * act's success criteria yet (i.e. we're about to nudge, not advance). */
   nudge?: { situation: ReplySituation };
+  /** Set when the reply WAS good, but we still need more depth on this
+   * territory before moving on — different in tone from a nudge: this is
+   * "great, now tell me more," not "that didn't quite work." */
+  deepen?: boolean;
 }
 
-export function buildSystemPrompt({ ageBand, state, nudge }: BuildPromptArgs): string {
+export function buildSystemPrompt({ ageBand, state, nudge, deepen }: BuildPromptArgs): string {
   const config = AGE_BAND_CONFIG[ageBand];
   const act = getAct(ageBand, state.actIndex);
 
@@ -292,11 +312,12 @@ export function buildSystemPrompt({ ageBand, state, nudge }: BuildPromptArgs): s
     };
 
     const exampleInstruction = isSecondNudge
-      ? `This is the second time — give them 1-2 concrete examples to make the question easier to answer, paraphrased naturally in your own words, e.g. things like ${exampleList}. Don't read the list verbatim or sound like a multiple-choice quiz.`
+      ? `This is the second time — mention 1-2 of these as illustration, woven into a sentence, paraphrased naturally: ${exampleList}. HARD RULE: do not present them as a pick-one list ("is it X, Y, or Z?") — that's a multiple-choice quiz, not an example. Say something like "some kids say things like ${act.examples[0]} — what's it like for you?" so they still have to answer in their own words, not just point at one of your options.`
       : "Keep it open — no examples yet, just invite a bit more in different words. Save examples for next time if they're still stuck.";
 
     return [
       SHARED_GUARDRAILS,
+      QUESTION_TURN_RULES,
       voiceBlock,
       `You are still on the territory "${act.name}" — the underlying question you're working toward is: "${act.topLevelQuestion}". What we actually need: ${act.successCriteria}`,
       situationGuidance[nudge.situation],
@@ -313,6 +334,16 @@ export function buildSystemPrompt({ ageBand, state, nudge }: BuildPromptArgs): s
       voiceBlock,
       `You are at the final territory: "${act.name}". The underlying question: "${act.topLevelQuestion}"`,
       "Look back across everything they've shared in this conversation and reflect ONE specific, warm pattern or strength you actually noticed — name something concrete from what they said, not a generic compliment. Then ask if that sounds right to them (a question mark is expected and fine here — this is the one exception to never asking a follow-up after the reaction). Keep it to 2-3 sentences.",
+    ].join("\n\n");
+  }
+
+  if (deepen) {
+    return [
+      SHARED_GUARDRAILS,
+      REACTION_PRINCIPLES,
+      voiceBlock,
+      `You are still on the territory "${act.name}" — the underlying question: "${act.topLevelQuestion}". What we actually need: ${act.successCriteria}`,
+      "Their last answer was genuine and on-topic, but it's only one word or one quick fact — not enough to actually know something specific about them yet. Don't move to the next territory. Warmly react to what they said, then ask a natural follow-up that digs into WHY, HOW, or what specifically about it — pull on the actual thread they gave you, don't ask a generic \"tell me more\". HARD RULE: do not offer a list of options to pick from (no \"is it A, B, or C\") — a multiple-choice question just invites another one-word pick, which defeats the entire point of this follow-up. Ask something they have to answer in their own words instead, even for a young child — e.g. \"what's your favorite part about that?\" rather than \"is it the moves, the planning, or winning?\".",
     ].join("\n\n");
   }
 

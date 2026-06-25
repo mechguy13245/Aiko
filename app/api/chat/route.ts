@@ -11,6 +11,7 @@ import {
   getActCount,
   isAgeBand,
   isClosingTurn,
+  minRepliesFor,
   MAX_NUDGES_PER_ACT,
   INITIAL_ACT_STATE,
   type ActState,
@@ -45,6 +46,15 @@ interface ChatRequestBody {
 
 function textResponse(text: string, headers?: Record<string, string>) {
   return new NextResponse(text, { headers: { "Content-Type": "text/plain; charset=utf-8", ...headers } });
+}
+
+function normalizeState(raw: unknown): ActState {
+  const s = (raw ?? {}) as Partial<ActState>;
+  return {
+    actIndex: s.actIndex ?? 0,
+    nudgeCount: s.nudgeCount ?? 0,
+    satisfiedCount: s.satisfiedCount ?? 0,
+  };
 }
 
 function progressHeaders(ageBand: AgeBand, state: ActState, closing: boolean) {
@@ -129,7 +139,7 @@ export async function POST(request: Request) {
   // re-running the model. Otherwise, continue the conversation naturally.
   if (existingSession?.completedAt) {
     const storedTranscript = existingSession.transcript as TranscriptMessage[];
-    const closedState = existingSession.state as ActState;
+    const closedState = normalizeState(existingSession.state);
 
     if (messages.length <= storedTranscript.length) {
       const lastAssistantMessage = [...storedTranscript].reverse().find((m) => m.role === "assistant");
@@ -194,7 +204,7 @@ export async function POST(request: Request) {
     return response;
   }
 
-  const currentState: ActState = (existingSession?.state as ActState) ?? INITIAL_ACT_STATE;
+  const currentState: ActState = existingSession ? normalizeState(existingSession.state) : INITIAL_ACT_STATE;
   const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
 
   if (latestUserMessage) {
@@ -210,14 +220,20 @@ export async function POST(request: Request) {
   // Judge whether the latest reply actually satisfies what this act needs,
   // rather than assuming any non-empty reply is good enough. A reply that
   // falls short earns a nudge (with an example on the second attempt)
-  // instead of silently advancing past it.
+  // instead of silently advancing past it. And a reply that IS good still
+  // isn't enough on its own — "sleeping" or "winning" is genuine but too
+  // thin to build a real, specific profile signal from, so each territory
+  // (other than Mirror) needs multiple good exchanges before moving on.
   let nextState: ActState = currentState;
   let nudge: { situation: ReplySituation } | undefined;
+  let deepen = false;
 
   if (latestUserMessage) {
     const act = getAct(ageBand, currentState.actIndex);
     if (act) {
       const judgment = await judgeReply(ageBand, act, messages.slice(0, -1), latestUserMessage.content);
+      const minReplies = minRepliesFor(act);
+
       if (judgment.situation === "wants-to-stop") {
         // Ending gracefully overrides everything else — doesn't consume a
         // nudge and doesn't force-advance. They can pick the same question
@@ -225,18 +241,27 @@ export async function POST(request: Request) {
         nextState = currentState;
         nudge = { situation: "wants-to-stop" };
       } else if (judgment.satisfied) {
-        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0 };
+        const satisfiedCount = currentState.satisfiedCount + 1;
+        if (satisfiedCount >= minReplies) {
+          nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0, satisfiedCount: 0 };
+        } else {
+          // Good answer, but not enough depth yet — ask to go deeper on the
+          // same territory instead of moving on. Counts toward the nudge
+          // budget too, so we can never stall forever on one territory.
+          nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount };
+          deepen = true;
+        }
       } else if (currentState.nudgeCount < MAX_NUDGES_PER_ACT) {
-        nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1 };
+        nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount: currentState.satisfiedCount };
         nudge = { situation: judgment.situation };
       } else {
         // Already nudged the max number of times — move on rather than stall.
-        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0 };
+        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0, satisfiedCount: 0 };
       }
     }
   }
 
-  const system = buildSystemPrompt({ ageBand, state: nextState, nudge });
+  const system = buildSystemPrompt({ ageBand, state: nextState, nudge, deepen });
   const closingTurn = isClosingTurn(ageBand, nextState.actIndex);
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({
@@ -258,7 +283,7 @@ export async function POST(request: Request) {
       tags: [
         "aiko",
         `age-${ageBand}`,
-        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : "act-turn",
+        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : deepen ? "deepen-turn" : "act-turn",
       ],
     },
     async () => {

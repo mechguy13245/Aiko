@@ -33,7 +33,8 @@ export async function judgeReply(
         `You judge a single reply from a student (age band ${ageBand}) in a reflective conversation. ` +
         `The current question's goal: ${act.goal} ` +
         `What counts as satisfying it: ${act.successCriteria} ` +
-        `Be lenient: short-but-specific answers count as satisfactory. Only mark unsatisfied if the reply is truly empty of content, a flat refusal, pure filler ("idk", "nothing", "lol"), clearly off-topic, or the student is asking what you mean. ` +
+        `First check: does the reply actually respond to the specific question in the LAST assistant message shown below — not just the topic in general? A reply that's on-theme but doesn't answer what was just asked (e.g. answering "what do you do in your free time" with "winning" when you were just asked "what do you like best about chess") is NOT satisfactory — mark it "vague" or "off-topic" even if it sounds like a real answer to a different question. ` +
+        `Be lenient on depth, not on relevance: short-but-specific answers that DO answer the actual last question count as satisfactory. Only mark unsatisfied if the reply is truly empty of content, a flat refusal, pure filler ("idk", "nothing", "lol"), doesn't answer what was just asked, or the student is asking what you mean. ` +
         `Use situation "wants-to-stop" (and satisfied=false) ONLY if the student explicitly signals they want to stop, are done, don't want to continue, or seem genuinely distressed/upset about the conversation itself — not just a short or reluctant answer.`,
       prompt: [
         ...recentContext.slice(-4).map((m) => `${m.role}: ${m.content}`),
