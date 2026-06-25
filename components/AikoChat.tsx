@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { motion } from "framer-motion";
-import { ArrowUp, Sparkles } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowUp, Sparkles, Mic } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { AgeBand, isAgeBand } from "@/lib/aiko/conversation";
 
@@ -92,6 +92,11 @@ export const AikoChat = () => {
   const [actProgress, setActProgress] = useState<{ index: number; count: number } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<unknown>(null);
+  const stableTranscriptRef = useRef("");
+  const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
   const [savedAge, setSavedAge] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -240,12 +245,59 @@ export const AikoChat = () => {
     const text = userInput.trim();
     if (!text || isStreaming || !selectedAge) return;
 
+    // Stop any active voice session before sending
+    if (isListening && recognitionRef.current) {
+      (recognitionRef.current as { stop: () => void }).stop();
+      setIsListening(false);
+    }
+
     setUserInput("");
     const userMessage: Message = { id: `user-${Date.now()}`, role: "user", content: text };
     const history = [...messages, userMessage];
     setMessages(history);
 
     await sendToAiko(selectedAge, history);
+  };
+
+  const toggleVoice = () => {
+    if (!speechSupported) return;
+
+    if (isListening) {
+      (recognitionRef.current as { stop: () => void } | null)?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    stableTranscriptRef.current = userInput;
+
+    recognition.onresult = (event: { resultIndex: number; results: { isFinal: boolean; [index: number]: { transcript: string } }[] }) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          stableTranscriptRef.current += (stableTranscriptRef.current ? " " : "") + t.trim();
+        } else {
+          interim = t;
+        }
+      }
+      const display = stableTranscriptRef.current + (interim ? (stableTranscriptRef.current ? " " : "") + interim : "");
+      setUserInput(display);
+    };
+
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
   };
 
   if (loadingProfile) {
@@ -393,6 +445,33 @@ export const AikoChat = () => {
               className="flex-1 bg-transparent text-slate-100 placeholder:text-slate-500 text-base resize-none outline-none min-h-[44px] max-h-[120px] disabled:opacity-60"
               rows={1}
             />
+            {speechSupported && (
+              <button
+                type="button"
+                onClick={toggleVoice}
+                disabled={isStreaming}
+                title={isListening ? "Stop listening" : "Speak your answer"}
+                className={cn(
+                  "w-10 h-10 rounded-full flex items-center justify-center transition-all flex-shrink-0 cursor-pointer relative",
+                  isListening
+                    ? "bg-rose-500 hover:bg-rose-600 text-white"
+                    : "bg-slate-700/30 hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                )}
+              >
+                <AnimatePresence>
+                  {isListening && (
+                    <motion.span
+                      key="ripple"
+                      className="absolute inset-0 rounded-full bg-rose-400/40"
+                      initial={{ scale: 1, opacity: 0.6 }}
+                      animate={{ scale: 1.8, opacity: 0 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "easeOut" }}
+                    />
+                  )}
+                </AnimatePresence>
+                <Mic className="w-5 h-5 relative z-10" />
+              </button>
+            )}
             <button
               onClick={handleSend}
               disabled={!userInput.trim() || isStreaming}
