@@ -5,7 +5,7 @@ import type { AgeBand, ConversationAct, ReplySituation } from "@/lib/aiko/conver
 
 const judgeSchema = z.object({
   satisfied: z.boolean().describe("True only if the reply gives concrete, specific information satisfying the success criteria."),
-  situation: z.enum(["satisfactory", "vague", "off-topic", "confused"]),
+  situation: z.enum(["satisfactory", "vague", "off-topic", "confused", "wants-to-stop"]),
 });
 
 export interface JudgeResult {
@@ -33,7 +33,8 @@ export async function judgeReply(
         `You judge a single reply from a student (age band ${ageBand}) in a reflective conversation. ` +
         `The current question's goal: ${act.goal} ` +
         `What counts as satisfying it: ${act.successCriteria} ` +
-        `Be lenient: short-but-specific answers count as satisfactory. Only mark unsatisfied if the reply is truly empty of content, a flat refusal, pure filler ("idk", "nothing", "lol"), clearly off-topic, or the student is asking what you mean.`,
+        `Be lenient: short-but-specific answers count as satisfactory. Only mark unsatisfied if the reply is truly empty of content, a flat refusal, pure filler ("idk", "nothing", "lol"), clearly off-topic, or the student is asking what you mean. ` +
+        `Use situation "wants-to-stop" (and satisfied=false) ONLY if the student explicitly signals they want to stop, are done, don't want to continue, or seem genuinely distressed/upset about the conversation itself — not just a short or reluctant answer.`,
       prompt: [
         ...recentContext.slice(-4).map((m) => `${m.role}: ${m.content}`),
         `user: ${latestReply}`,

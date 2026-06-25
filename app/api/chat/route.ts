@@ -73,7 +73,7 @@ async function extractProfile(
         model: openai("gpt-5.4-mini"),
         schema: profileSchema,
         system:
-          "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a short strengths-based profile. Be warm, specific, and avoid generic statements. Never diagnose or use clinical language.",
+          "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a structured profile across five dimensions. Generic values are a failure state — a phrase like \"curious learner\" or \"enjoys learning\" could describe any student and is not acceptable; every value must be specific enough that it could only describe this particular student, grounded in something they actually said. Confidence should be low (0.3-0.5) rather than inflated if the conversation didn't give you much to go on for that dimension. Never diagnose or use clinical language.",
         prompt: `Conversation transcript:\n\n${transcript.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
         experimental_telemetry: { isEnabled: true },
         abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
@@ -218,7 +218,13 @@ export async function POST(request: Request) {
     const act = getAct(ageBand, currentState.actIndex);
     if (act) {
       const judgment = await judgeReply(ageBand, act, messages.slice(0, -1), latestUserMessage.content);
-      if (judgment.satisfied) {
+      if (judgment.situation === "wants-to-stop") {
+        // Ending gracefully overrides everything else — doesn't consume a
+        // nudge and doesn't force-advance. They can pick the same question
+        // back up naturally whenever they reply again.
+        nextState = currentState;
+        nudge = { situation: "wants-to-stop" };
+      } else if (judgment.satisfied) {
         nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0 };
       } else if (currentState.nudgeCount < MAX_NUDGES_PER_ACT) {
         nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1 };

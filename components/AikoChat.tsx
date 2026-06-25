@@ -363,7 +363,7 @@ export const AikoChat = () => {
           {messages.map((message) => (
             <ChatBubble key={message.id} message={message} />
           ))}
-          {isStreaming && messages[messages.length - 1]?.content === "" && (
+          {isStreaming && (messages.length === 0 || messages[messages.length - 1]?.content === "" || messages[messages.length - 1]?.role === "user") && (
             <div className="flex justify-start mb-4">
               <div className="bg-slate-800/50 rounded-2xl rounded-tl-sm">
                 <TypingIndicator />
