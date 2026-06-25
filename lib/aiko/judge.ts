@@ -1,4 +1,4 @@
-import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { AgeBand, ConversationAct, ReplySituation } from "@/lib/aiko/conversation";
@@ -35,7 +35,7 @@ export async function judgeReply(
 ): Promise<JudgeResult> {
   try {
     const { object } = await generateObject({
-      model: openai("gpt-5.4"),
+      model: anthropic("claude-3-5-sonnet-latest"),
       schema: judgeSchema,
       system:
         `You judge a single reply from a student (age band ${ageBand}) in a reflective conversation. ` +

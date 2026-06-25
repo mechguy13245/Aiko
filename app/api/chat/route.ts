@@ -1,4 +1,4 @@
-import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { propagateAttributes } from "@langfuse/tracing";
 import { generateObject, generateText, streamText, type ModelMessage } from "ai";
 import { NextResponse, after } from "next/server";
@@ -80,7 +80,7 @@ async function extractProfile(
     },
     async () => {
       const { object } = await generateObject({
-        model: openai("gpt-5.4-mini"),
+        model: anthropic("claude-sonnet-4-6"),
         schema: profileSchema,
         system:
           "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a structured profile across five dimensions. Generic values are a failure state — a phrase like \"curious learner\" or \"enjoys learning\" could describe any student and is not acceptable; every value must be specific enough that it could only describe this particular student, grounded in something they actually said. Confidence should be low (0.3-0.5) rather than inflated if the conversation didn't give you much to go on for that dimension. Never diagnose or use clinical language.",
@@ -166,7 +166,7 @@ export async function POST(request: Request) {
       async () => {
         try {
           const result = streamText({
-            model: openai("gpt-5.4-mini"),
+            model: anthropic("claude-sonnet-4-6"),
             system,
             messages: modelMessages,
             experimental_telemetry: { isEnabled: true },
@@ -294,7 +294,7 @@ export async function POST(request: Request) {
         try {
           text = (
             await generateText({
-              model: openai("gpt-5.4-mini"),
+              model: anthropic("claude-sonnet-4-6"),
               system,
               messages: modelMessages,
               experimental_telemetry: { isEnabled: true },
@@ -305,7 +305,7 @@ export async function POST(request: Request) {
           if (text.includes("?")) {
             text = (
               await generateText({
-                model: openai("gpt-5.4-mini"),
+                model: anthropic("claude-sonnet-4-6"),
                 system: `${system}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
                 messages: modelMessages,
                 experimental_telemetry: { isEnabled: true },
@@ -344,7 +344,7 @@ export async function POST(request: Request) {
 
       try {
         const result = streamText({
-          model: openai("gpt-5.4-mini"),
+          model: anthropic("claude-sonnet-4-6"),
           system,
           messages: modelMessages,
           experimental_telemetry: { isEnabled: true },

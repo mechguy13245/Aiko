@@ -11,6 +11,7 @@
     "db:migrate": "node db/migrate.cjs"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.87",
     "@ai-sdk/openai": "^3.0.74",
     "@langfuse/otel": "^5.7.0",
     "@langfuse/tracing": "^5.7.0",
