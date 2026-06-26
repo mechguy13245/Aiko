@@ -1,8 +1,40 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
-import { getActCount, isAgeBand, type ActState } from "@/lib/aiko/conversation";
+import { isAgeBand, DIMENSION_KEYS, type ConversationState } from "@/lib/aiko/conversation";
 import { getSession } from "@/lib/aiko/persist";
+
+function normalizeStateForRead(raw: unknown): ConversationState {
+  const s = (raw ?? {}) as Record<string, unknown>;
+  // Old shape (pre-rewrite) — return safe defaults
+  if ("actIndex" in s) {
+    return {
+      turnCount: 0,
+      dimensions: {
+        interestDomain:   { richness: "none", lastTurnIndex: null },
+        naturalStrength:  { richness: "none", lastTurnIndex: null },
+        realSelfSignal:   { richness: "none", lastTurnIndex: null },
+        purposeDirection: { richness: "none", lastTurnIndex: null },
+        paceStyle:        { richness: "none", lastTurnIndex: null },
+      },
+      consecutiveLowContentTurns: 0,
+      endedReason: "ongoing",
+    };
+  }
+  const c = s as Partial<ConversationState>;
+  return {
+    turnCount: typeof c.turnCount === "number" ? c.turnCount : 0,
+    dimensions: (c.dimensions as ConversationState["dimensions"]) ?? {
+      interestDomain:   { richness: "none", lastTurnIndex: null },
+      naturalStrength:  { richness: "none", lastTurnIndex: null },
+      realSelfSignal:   { richness: "none", lastTurnIndex: null },
+      purposeDirection: { richness: "none", lastTurnIndex: null },
+      paceStyle:        { richness: "none", lastTurnIndex: null },
+    },
+    consecutiveLowContentTurns: typeof c.consecutiveLowContentTurns === "number" ? c.consecutiveLowContentTurns : 0,
+    endedReason: (c.endedReason as ConversationState["endedReason"]) ?? "ongoing",
+  };
+}
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -20,15 +52,18 @@ export async function GET() {
     return NextResponse.json({ session: null });
   }
 
-  const state = session.state as ActState;
+  const state = normalizeStateForRead(session.state);
+  const dimensionsTouched = DIMENSION_KEYS.filter((k) => state.dimensions[k].richness !== "none").length;
 
   return NextResponse.json({
     session: {
       ageBand: session.ageBand,
       transcript: session.transcript,
       completed: Boolean(session.completedAt),
-      actIndex: state?.actIndex ?? 0,
-      actCount: isAgeBand(session.ageBand) ? getActCount(session.ageBand) : 0,
+      turnCount: state.turnCount,
+      dimensionsTouched,
+      dimensionsTotal: DIMENSION_KEYS.length,
+      endedReason: state.endedReason,
     },
   });
 }

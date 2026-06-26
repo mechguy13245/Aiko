@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -6,32 +6,27 @@ import { ArrowUp, Sparkles, Mic } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { AgeBand, isAgeBand } from "@/lib/aiko/conversation";
 
-// Utility function
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
 
-// Types
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
 }
 
-// Components
+interface ConvProgress {
+  turnCount: number;
+  dimensionsTouched: number; // out of 5
+}
+
 const TypingIndicator = () => (
   <div className="flex items-center gap-1.5 px-4 py-3">
     {[0, 1, 2].map((i) => (
       <motion.div
         key={i}
         className="w-2 h-2 bg-amber-400/60 rounded-full"
-        animate={{
-          scale: [1, 1.3, 1],
-          opacity: [0.5, 1, 0.5],
-        }}
-        transition={{
-          duration: 1.2,
-          repeat: Infinity,
-          delay: i * 0.2,
-        }}
+        animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }}
+        transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
       />
     ))}
   </div>
@@ -55,13 +50,26 @@ const ChatBubble: React.FC<{ message: Message }> = ({ message }) => (
   </motion.div>
 );
 
-const ProgressIndicator: React.FC<{ current: number; total: number }> = ({ current, total }) => (
-  <div className="text-xs text-slate-400 font-mono">
-    Act {current} of {total}
+// Five dots — one per profile dimension. Filled as the conversation touches each.
+const DimensionDots: React.FC<{ touched: number }> = ({ touched }) => (
+  <div className="flex items-center gap-1" title={`${touched} of 5 areas explored`}>
+    {Array.from({ length: 5 }, (_, i) => (
+      <div
+        key={i}
+        className={`w-1.5 h-1.5 rounded-full transition-all ${
+          i < touched ? "bg-amber-400/80" : "bg-slate-700"
+        }`}
+      />
+    ))}
   </div>
 );
 
-const AgePickerCard: React.FC<{ ageRange: string; isSaved?: boolean; disabled?: boolean; onClick: () => void }> = ({ ageRange, isSaved, disabled, onClick }) => (
+const AgePickerCard: React.FC<{
+  ageRange: string;
+  isSaved?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}> = ({ ageRange, isSaved, disabled, onClick }) => (
   <motion.button
     whileHover={disabled ? undefined : { scale: 1.03, y: -4 }}
     whileTap={disabled ? undefined : { scale: 0.98 }}
@@ -69,7 +77,9 @@ const AgePickerCard: React.FC<{ ageRange: string; isSaved?: boolean; disabled?: 
     disabled={disabled}
     className={cn(
       "bg-slate-800/40 hover:bg-slate-800/60 border rounded-2xl p-8 transition-all cursor-pointer relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed",
-      isSaved ? "border-amber-400/80 shadow-[0_0_15px_rgba(251,191,36,0.15)]" : "border-slate-700/50 hover:border-amber-400/30"
+      isSaved
+        ? "border-amber-400/80 shadow-[0_0_15px_rgba(251,191,36,0.15)]"
+        : "border-slate-700/50 hover:border-amber-400/30",
     )}
   >
     {isSaved && (
@@ -81,7 +91,6 @@ const AgePickerCard: React.FC<{ ageRange: string; isSaved?: boolean; disabled?: 
   </motion.button>
 );
 
-// Main Component
 export const AikoChat = () => {
   const [screen, setScreen] = useState<"landing" | "chat">("landing");
   const [selectedAge, setSelectedAge] = useState<AgeBand | "">("");
@@ -89,28 +98,25 @@ export const AikoChat = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [userInput, setUserInput] = useState("");
   const [errorText, setErrorText] = useState("");
-  const [actProgress, setActProgress] = useState<{ index: number; count: number } | null>(null);
+  const [convProgress, setConvProgress] = useState<ConvProgress | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<unknown>(null);
   const stableTranscriptRef = useRef("");
-  const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+  const speechSupported =
+    typeof window !== "undefined" &&
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
   const [savedAge, setSavedAge] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  // React Strict Mode (dev only) double-invokes effects on mount; without this
-  // guard the session fetch (and the opening message it kicks off) fires twice.
   const loadSessionRanRef = useRef(false);
 
   useEffect(() => {
     if (loadSessionRanRef.current) return;
     loadSessionRanRef.current = true;
 
-    // There is exactly one persistent chat session per user. On every login
-    // we resume it as-is: mid-conversation picks back up where it left off,
-    // and a completed one re-shows its saved reflection.
     async function loadSession() {
       try {
         const res = await fetch("/api/chat-session");
@@ -120,10 +126,17 @@ export const AikoChat = () => {
           if (existing && isAgeBand(existing.ageBand)) {
             setSavedAge(existing.ageBand);
             setSelectedAge(existing.ageBand);
-
-            const transcript = (existing.transcript ?? []) as { role: "user" | "assistant"; content: string }[];
-            setActProgress({ index: existing.actIndex ?? 0, count: existing.actCount ?? 0 });
-            setMessages(transcript.map((m, i) => ({ id: `resumed-${i}`, role: m.role, content: m.content })));
+            const transcript = (existing.transcript ?? []) as {
+              role: "user" | "assistant";
+              content: string;
+            }[];
+            setConvProgress({
+              turnCount: existing.turnCount ?? 0,
+              dimensionsTouched: existing.dimensionsTouched ?? 0,
+            });
+            setMessages(
+              transcript.map((m, i) => ({ id: `resumed-${i}`, role: m.role, content: m.content })),
+            );
             setScreen("chat");
           }
         }
@@ -175,13 +188,11 @@ export const AikoChat = () => {
         throw new Error(`Request failed with status ${res.status}`);
       }
 
-      const actIndex = Number(res.headers.get("X-Aiko-Act-Index") ?? "0");
-      const actCount = Number(res.headers.get("X-Aiko-Act-Count") ?? "0");
-      setActProgress({ index: actIndex, count: actCount });
+      setConvProgress({
+        turnCount: Number(res.headers.get("X-Aiko-Turn-Count") ?? "0"),
+        dimensionsTouched: Number(res.headers.get("X-Aiko-Dimensions-Touched") ?? "0"),
+      });
 
-      // Every reply — including the closing message — is just another chat
-      // bubble in the same thread. There's no separate "reflection" screen
-      // and no "start over"; the conversation simply keeps going.
       const assistantId = `aiko-${Date.now()}`;
       setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
 
@@ -194,7 +205,7 @@ export const AikoChat = () => {
         if (done) break;
         accumulated += decoder.decode(value, { stream: true });
         setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m))
+          prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
         );
       }
     } catch (err) {
@@ -205,17 +216,12 @@ export const AikoChat = () => {
     }
   };
 
-  // Guards against React Strict Mode's double effect invocation firing the
-  // opening message twice (which raced two parallel conversations against
-  // the same session and skewed act progression).
   const openingFiredRef = useRef(false);
 
   useEffect(() => {
     if (screen === "chat" && selectedAge && messages.length === 0) {
       if (openingFiredRef.current) return;
       openingFiredRef.current = true;
-      // Kicks off Aiko's opening message for this conversation; intentionally
-      // fires a network request rather than just syncing local state.
       sendToAiko(selectedAge, []);
     }
   }, [screen, selectedAge, messages.length]);
@@ -236,16 +242,12 @@ export const AikoChat = () => {
     } catch (err) {
       console.error("Failed to save class range:", err);
     }
-    // The opening message is kicked off by the effect that watches
-    // screen/selectedAge/messages, so both a fresh pick and "start over"
-    // go through the same single code path.
   };
 
   const handleSend = async () => {
     const text = userInput.trim();
     if (!text || isStreaming || !selectedAge) return;
 
-    // Stop any active voice session before sending
     if (isListening && recognitionRef.current) {
       (recognitionRef.current as { stop: () => void }).stop();
       setIsListening(false);
@@ -278,7 +280,10 @@ export const AikoChat = () => {
 
     stableTranscriptRef.current = userInput;
 
-    recognition.onresult = (event: { resultIndex: number; results: { isFinal: boolean; [index: number]: { transcript: string } }[] }) => {
+    recognition.onresult = (event: {
+      resultIndex: number;
+      results: { isFinal: boolean; [index: number]: { transcript: string } }[];
+    }) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
@@ -288,7 +293,9 @@ export const AikoChat = () => {
           interim = t;
         }
       }
-      const display = stableTranscriptRef.current + (interim ? (stableTranscriptRef.current ? " " : "") + interim : "");
+      const display =
+        stableTranscriptRef.current +
+        (interim ? (stableTranscriptRef.current ? " " : "") + interim : "");
       setUserInput(display);
     };
 
@@ -365,9 +372,24 @@ export const AikoChat = () => {
           >
             <p className="text-slate-500 text-sm uppercase tracking-wider">Choose your age</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <AgePickerCard ageRange="5–8" isSaved={savedAge === "5-8"} disabled={loadingProfile} onClick={() => startConversation("5-8")} />
-              <AgePickerCard ageRange="9–12" isSaved={savedAge === "9-12"} disabled={loadingProfile} onClick={() => startConversation("9-12")} />
-              <AgePickerCard ageRange="13–18" isSaved={savedAge === "13-18"} disabled={loadingProfile} onClick={() => startConversation("13-18")} />
+              <AgePickerCard
+                ageRange="5–8"
+                isSaved={savedAge === "5-8"}
+                disabled={loadingProfile}
+                onClick={() => startConversation("5-8")}
+              />
+              <AgePickerCard
+                ageRange="9–12"
+                isSaved={savedAge === "9-12"}
+                disabled={loadingProfile}
+                onClick={() => startConversation("9-12")}
+              />
+              <AgePickerCard
+                ageRange="13–18"
+                isSaved={savedAge === "13-18"}
+                disabled={loadingProfile}
+                onClick={() => startConversation("13-18")}
+              />
             </div>
           </motion.div>
         </div>
@@ -394,11 +416,8 @@ export const AikoChat = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {actProgress && actProgress.count > 0 && (
-              <ProgressIndicator
-                current={Math.min(actProgress.index + 1, actProgress.count)}
-                total={actProgress.count}
-              />
+            {convProgress !== null && (
+              <DimensionDots touched={convProgress.dimensionsTouched} />
             )}
             <button
               onClick={handleSignOut}
@@ -415,13 +434,16 @@ export const AikoChat = () => {
           {messages.map((message) => (
             <ChatBubble key={message.id} message={message} />
           ))}
-          {isStreaming && (messages.length === 0 || messages[messages.length - 1]?.content === "" || messages[messages.length - 1]?.role === "user") && (
-            <div className="flex justify-start mb-4">
-              <div className="bg-slate-800/50 rounded-2xl rounded-tl-sm">
-                <TypingIndicator />
+          {isStreaming &&
+            (messages.length === 0 ||
+              messages[messages.length - 1]?.content === "" ||
+              messages[messages.length - 1]?.role === "user") && (
+              <div className="flex justify-start mb-4">
+                <div className="bg-slate-800/50 rounded-2xl rounded-tl-sm">
+                  <TypingIndicator />
+                </div>
               </div>
-            </div>
-          )}
+            )}
           <div ref={chatEndRef} />
         </div>
       </div>
@@ -455,7 +477,7 @@ export const AikoChat = () => {
                   "w-10 h-10 rounded-full flex items-center justify-center transition-all flex-shrink-0 cursor-pointer relative",
                   isListening
                     ? "bg-rose-500 hover:bg-rose-600 text-white"
-                    : "bg-slate-700/30 hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                    : "bg-slate-700/30 hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed",
                 )}
               >
                 <AnimatePresence>
@@ -479,7 +501,7 @@ export const AikoChat = () => {
                 "w-10 h-10 rounded-full flex items-center justify-center transition-all flex-shrink-0 cursor-pointer",
                 userInput.trim() && !isStreaming
                   ? "bg-amber-500 hover:bg-amber-600 text-slate-900"
-                  : "bg-slate-700/30 text-slate-600 cursor-not-allowed"
+                  : "bg-slate-700/30 text-slate-600 cursor-not-allowed",
               )}
             >
               <ArrowUp className="w-5 h-5" />
