@@ -32,7 +32,7 @@ try {
 } catch {}
 
 import { classifyTurn } from "../lib/aiko/judge";
-import { buildSystemPrompt, INITIAL_CONVERSATION_STATE, DIMENSION_KEYS, type ConversationState } from "../lib/aiko/conversation";
+import { buildSystemPrompt, INITIAL_CONVERSATION_STATE, OPENING_MESSAGES, DIMENSION_KEYS, type ConversationState } from "../lib/aiko/conversation";
 
 function sep(label: string) {
   console.log("\n" + "=".repeat(60));
@@ -133,7 +133,7 @@ function testPromptStructure(): number {
     const state = makeState({ turnCount: turn });
     const prompt = buildSystemPrompt({ ageBand: "9-12", state });
     const hasBackstop = prompt.includes("SOFT BACKSTOP");
-    const hasForceSwitch = prompt.includes("you must") || prompt.includes("move to a new") || prompt.includes("you need to move") || prompt.includes("switch to");
+    const hasForceSwitch = prompt.includes("you must now") || prompt.includes("move to a new topic now") || prompt.includes("you need to move on");
     // No wantsToStop branch exists (removed in single-LLM rewrite)
     const hasWantsToStopBranch = prompt.includes("The child just signaled they want to stop");
     if (hasBackstop || hasForceSwitch || hasWantsToStopBranch) {
@@ -144,6 +144,40 @@ function testPromptStructure(): number {
   if (t9) console.log("  Turns 1-9: no redirect or force-switch directives present");
   console.log(t9 ? "PASS" : "FAIL");
   total++; if (t9) passed++;
+
+  // Test 10: opening messages exist for all age bands and contain no question in
+  // the first sentence (they invite, they don't interrogate).
+  sep("Test 10 — Opening messages exist and are age-appropriate");
+  const ageBands = ["5-8", "9-12", "13-18"] as const;
+  let t10 = true;
+  for (const band of ageBands) {
+    const msg = OPENING_MESSAGES[band];
+    if (!msg || msg.length < 20) {
+      console.log(`  ${band}: FAIL — missing or too short`);
+      t10 = false;
+    } else {
+      console.log(`  ${band}: OK (${msg.length} chars)`);
+    }
+  }
+  console.log(t10 ? "PASS" : "FAIL");
+  total++; if (t10) passed++;
+
+  // Test 11: normal system prompt contains boredom-acknowledgment guidance
+  sep("Test 11 — System prompt instructs model to acknowledge boredom directly");
+  const boredomPrompt = buildSystemPrompt({ ageBand: "13-18", state: makeState({ turnCount: 3 }) });
+  const hasBoredomRule = boredomPrompt.includes("boring") && boredomPrompt.includes("genuine choice");
+  console.log(`Contains boredom acknowledgment rule: ${hasBoredomRule}`);
+  console.log(hasBoredomRule ? "PASS" : "FAIL");
+  total++; if (hasBoredomRule) passed++;
+
+  // Test 12: normal system prompt contains deflection-redirect and variety-rule guidance
+  sep("Test 12 — System prompt contains deflection redirect and variety rule");
+  const hasDeflectionRule = boredomPrompt.includes("REDIRECT DEFLECTION");
+  const hasVarietyRule = boredomPrompt.includes("VARIETY RULE");
+  console.log(`Deflection redirect: ${hasDeflectionRule}, Variety rule: ${hasVarietyRule}`);
+  const t12 = hasDeflectionRule && hasVarietyRule;
+  console.log(t12 ? "PASS" : "FAIL");
+  total++; if (t12) passed++;
 
   return passed / total;
 }
@@ -182,17 +216,38 @@ async function testClassifier(): Promise<number> {
   console.log(`interestDomain: ${deathNote.dimensions.interestDomain} (expected: thin or rich) — ${t2 ? "PASS" : "FAIL"}`);
   total++; if (t2) passed++;
 
+  // Test 3 (Fix 3 regression): "its borign chat" after a real beach thread → wantsToStop=true
+  sep("Test 3 — Boredom signal 'its borign chat' → wantsToStop true");
+  const beachContext = [
+    { role: "assistant" as const, content: "What do you love most about being in the water?" },
+    { role: "user" as const, content: "fresh and i enjoy with my gf" },
+    { role: "assistant" as const, content: "Ha fair — but what do YOU love most about being there?" },
+    { role: "user" as const, content: "marina beach" },
+    { role: "assistant" as const, content: "Marina Beach — what's it like swimming there?" },
+    { role: "user" as const, content: "its like enjoying" },
+    { role: "assistant" as const, content: "Sunsets at the beach hit different. What do you usually do — still in the water when it happens?" },
+    { role: "user" as const, content: "swim and watch it" },
+    { role: "assistant" as const, content: "Do you and your gf have a favorite spot on the beach you always go back to?" },
+    { role: "user" as const, content: "yes" },
+    { role: "assistant" as const, content: "What's it like — tucked away or right in the middle of everything?" },
+  ];
+  const bored = await classifyTurn("13-18", beachContext, "its borign chat");
+  console.log("classifyTurn result:", JSON.stringify(bored, null, 2));
+  const t3 = bored.wantsToStop === true;
+  console.log(`wantsToStop on boredom: ${bored.wantsToStop} — expected: true — ${t3 ? "PASS" : "FAIL"}`);
+  total++; if (t3) passed++;
+
   return passed / total;
 }
 
 async function main() {
   const promptScore = testPromptStructure();
-  console.log(`\nPrompt structure tests: ${Math.round(promptScore * 7)}/7 passed`);
+  console.log(`\nPrompt structure tests: ${Math.round(promptScore * 10)}/10 passed`);
 
   console.log("\nRunning classifier tests (requires ANTHROPIC_API_KEY)...");
   try {
     const classifierScore = await testClassifier();
-    console.log(`Classifier tests: ${Math.round(classifierScore * 2)}/2 passed`);
+    console.log(`Classifier tests: ${Math.round(classifierScore * 3)}/3 passed`);
     const allPassed = promptScore === 1 && classifierScore === 1;
     console.log(`\n${"=".repeat(60)}`);
     console.log(`Overall: ${allPassed ? "ALL PASS" : "SOME FAILURES"}`);

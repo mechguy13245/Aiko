@@ -11,6 +11,7 @@ import {
   isFillerMessage,
   DIMENSION_KEYS,
   INITIAL_CONVERSATION_STATE,
+  OPENING_MESSAGES,
   type ConversationState,
   type AgeBand,
 } from "@/lib/aiko/conversation";
@@ -273,6 +274,30 @@ export async function POST(request: Request) {
       if (priorRedirects >= 1) return textResponse(CALM_REDIRECT_ESCALATED_MESSAGE);
       return textResponse(CALM_REDIRECT_MESSAGE);
     }
+  }
+
+  // ── Brand-new session opening: static message, no model call ────────────────
+  // messages.length === 0 only on a genuinely new session (resumed sessions
+  // always carry their transcript back from the frontend).
+  if (messages.length === 0) {
+    const opening = OPENING_MESSAGES[ageBand];
+    const openingState = { ...INITIAL_CONVERSATION_STATE };
+    after(async () => {
+      try {
+        await upsertSession({
+          sessionId,
+          userId: user.id,
+          ageBand,
+          transcript: [{ role: "assistant" as const, content: opening }],
+          state: openingState,
+          completed: false,
+        });
+      } catch (err) {
+        console.error("Opening message persistence failed:", err);
+      }
+      await langfuseSpanProcessor.forceFlush();
+    });
+    return textResponse(opening, progressHeaders(0, 0, false));
   }
 
   // Breathe detection — pure heuristic, no model call. Counts consecutive

@@ -28,7 +28,9 @@ const classifierSchema = z.object({
   wantsToStop: z
     .boolean()
     .describe(
-      "True only if the child explicitly signals they want to stop, are done, or seem genuinely distressed about continuing the conversation itself. A short or disengaged reply is NOT wants-to-stop.",
+      "True if the child explicitly signals they want to stop or are done, OR directly expresses boredom/frustration with the conversation itself — e.g. 'this is boring', 'boring chat', 'this is lame', 'this is dumb', 'I don't want to do this'. " +
+      "A short or low-effort content reply ('yeah', 'ok', 'sunset') is NOT this — those are just thin answers. " +
+      "Only flag true when the child is making an explicit statement about the conversation itself, not about the topic.",
     ),
 });
 
