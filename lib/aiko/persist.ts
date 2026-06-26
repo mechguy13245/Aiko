@@ -1,7 +1,7 @@
-import { db } from "@/db";
+﻿import { db } from "@/db";
 import { aikoModerationEvents, aikoSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import type { ActState, AgeBand } from "@/lib/aiko/conversation";
+import type { AgeBand, ConversationState } from "@/lib/aiko/conversation";
 import type { Profile } from "@/lib/aiko/profile";
 
 export interface TranscriptMessage {
@@ -14,7 +14,7 @@ interface UpsertSessionArgs {
   userId: string;
   ageBand: AgeBand;
   transcript: TranscriptMessage[];
-  state: ActState;
+  state: ConversationState;
   profile?: Profile;
   completed: boolean;
 }

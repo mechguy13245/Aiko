@@ -1,15 +1,18 @@
-/**
- * Chess regression test — premature abstraction bug.
+﻿/**
+ * Chess regression test — premature abstraction bug (updated for new engine).
  *
- * Bug: after "the way she is all powerful and can do anything" (a description
- * of the chess queen, not the student), Aiko jumped to "Do you find yourself
- * thinking that way in other areas too, like wanting to be the one with the
- * most options and control?" — a pre-packaged interpretation phrased as a
- * confirming question.
+ * Original bug: after "the way she is all powerful and can do anything" Aiko
+ * jumped to "Do you find yourself thinking that way in other areas too, like
+ * wanting to be the one with the most options and control?" — a pre-packaged
+ * interpretation phrased as a confirming question.
  *
- * Fix verifies:
- *   1. Judge correctly classifies as rich-needs-anchoring (not rich-ready-to-deepen)
- *   2. The resulting deepen prompt stays concrete, not personal
+ * Under the new engine this is fixed architecturally:
+ *   - No deepen/richness branching path exists anymore
+ *   - CORE_INSTRUCTION says stay with the concrete thing
+ *   - REACTION_PRINCIPLES principle 7 globally bans pre-packaged interpretations
+ *
+ * This test verifies the structural fix is in place and the classifier behaves
+ * correctly (chess interest registers as interestDomain signal, not wantsToStop).
  *
  * Run: npx tsx scripts/test-chess-regression.ts
  */
@@ -31,13 +34,8 @@ try {
   }
 } catch {}
 
-import { judgeReply } from "../lib/aiko/judge";
-import { buildSystemPrompt, getAct, type ActState } from "../lib/aiko/conversation";
-
-const AGE_BAND = "9-12" as const;
-const FREE_TIME_ACT_INDEX = 0; // freedom-vs-structure is always first
-
-const act = getAct(AGE_BAND, FREE_TIME_ACT_INDEX)!;
+import { classifyTurn } from "../lib/aiko/judge";
+import { buildSystemPrompt, INITIAL_CONVERSATION_STATE } from "../lib/aiko/conversation";
 
 function sep(label: string) {
   console.log("\n" + "=".repeat(60));
@@ -45,94 +43,59 @@ function sep(label: string) {
   console.log("=".repeat(60));
 }
 
-async function runCase(
-  label: string,
-  context: { role: "user" | "assistant"; content: string }[],
-  reply: string,
-  expectedRichness: "thin" | "rich-needs-anchoring" | "rich-ready-to-deepen",
-  checkDeepen?: (prompt: string) => boolean,
-) {
-  sep(label);
-  console.log(`\nReply under test: "${reply}"`);
-
-  const judgment = await judgeReply(AGE_BAND, act, context, reply);
-  console.log("\nJudge result:", JSON.stringify(judgment, null, 2));
-
-  const richnessOk = judgment.richness === expectedRichness;
-  console.log(`\nRichness: ${judgment.richness} — expected ${expectedRichness} → ${richnessOk ? "✓ PASS" : "✗ FAIL"}`);
-
-  let deepenOk = true;
-  if (judgment.satisfied && checkDeepen) {
-    const state: ActState = { actIndex: FREE_TIME_ACT_INDEX, nudgeCount: 1, satisfiedCount: 1 };
-    const prompt = buildSystemPrompt({ ageBand: AGE_BAND, state, deepen: { richness: judgment.richness } });
-    deepenOk = checkDeepen(prompt);
-    console.log(`\nDeepen prompt check: ${deepenOk ? "✓ PASS" : "✗ FAIL"}`);
-    if (!deepenOk) {
-      const excerpt = prompt.slice(prompt.lastIndexOf("\n\n") - 100).trim();
-      console.log("Deepen prompt excerpt:\n" + excerpt.slice(0, 600));
-    }
-  }
-
-  return richnessOk && deepenOk;
-}
+const chessContext = [
+  { role: "assistant" as const, content: "What do you actually like doing when you have free time?" },
+  { role: "user" as const, content: "I play chess a lot" },
+  { role: "assistant" as const, content: "What is your favourite piece?" },
+];
 
 async function main() {
   let passed = 0;
   let total = 0;
 
-  // Chess context: Aiko asked about what they like in chess; student named the queen
-  const chessContext = [
-    { role: "assistant" as const, content: "What do you actually like doing when you have free time?" },
-    { role: "user" as const, content: "I play chess a lot" },
-    { role: "assistant" as const, content: "What's your favourite piece?" },
-  ];
-
-  // Case 1: describes queen's power — should be rich-needs-anchoring, NOT rich-ready-to-deepen
-  // deepen prompt must NOT pivot to "do you find yourself wanting control" etc.
-  const ok1 = await runCase(
-    "Case 1 — chess queen power description (external, not self-referential)",
-    chessContext,
-    "the way she is all powerful and can do anything",
-    "rich-needs-anchoring",
-    (prompt) => {
-      // Must stay concrete on the chess piece
-      const hasPrePackaged = /find yourself.*control|wanting.*control|do you feel.*same.*life/i.test(prompt);
-      return !hasPrePackaged;
-    },
-  );
+  // Case 1: structural check — prompt bans pre-packaged interpretations globally
+  sep("Case 1 — System prompt bans pre-packaged interpretations (no API call)");
+  const prompt = buildSystemPrompt({ ageBand: "9-12", state: INITIAL_CONVERSATION_STATE });
+  const hasBan = prompt.includes("NEVER PRE-PACKAGE AN INTERPRETATION AS A QUESTION");
+  const hasPacing = prompt.includes("PACING RULE");
+  const hasNoDeepen = !prompt.includes("rich-needs-anchoring") && !prompt.includes("rich-ready-to-deepen");
+  console.log(`Ban present: ${hasBan}, pacing present: ${hasPacing}, no old deepen machinery: ${hasNoDeepen}`);
+  const ok1 = hasBan && hasPacing && hasNoDeepen;
+  console.log(ok1 ? "PASS" : "FAIL");
   total++; if (ok1) passed++;
 
-  // Case 2: likes going anywhere — still about the piece, not about themselves
-  const ok2 = await runCase(
-    "Case 2 — 'I like that she can go anywhere' (liking ≠ self-reflection)",
-    chessContext,
-    "I like that she can go anywhere on the board",
-    "rich-needs-anchoring",
-  );
+  // Case 2: classifier — "the way she is all powerful" → interestDomain signal, not wantsToStop
+  sep("Case 2 — Chess queen description registers as interestDomain signal");
+  const r2 = await classifyTurn("9-12", chessContext, "the way she is all powerful and can do anything");
+  console.log("Result:", JSON.stringify(r2, null, 2));
+  const ok2 = r2.dimensions.interestDomain !== "none" && !r2.wantsToStop;
+  console.log(`interestDomain: ${r2.dimensions.interestDomain}, wantsToStop: ${r2.wantsToStop}`);
+  console.log(ok2 ? "PASS" : "FAIL");
   total++; if (ok2) passed++;
 
-  // Case 3: explicit self-reference — now rich-ready-to-deepen
-  const ok3 = await runCase(
-    "Case 3 — 'I feel like that too, I hate being restricted' (explicit self-reference → ready)",
+  // Case 3: classifier — "I feel like that too, I hate being restricted" → rich interestDomain, still no stop
+  sep("Case 3 — Self-referential reply registers rich interestDomain");
+  const r3 = await classifyTurn(
+    "9-12",
     [...chessContext, { role: "assistant" as const, content: "What is it about the queen that draws you in?" }],
-    "I feel like that too, I hate being restricted to one place",
-    "rich-ready-to-deepen",
+    "I feel like that too, I hate being boxed in to one spot",
   );
+  console.log("Result:", JSON.stringify(r3, null, 2));
+  const ok3 = r3.dimensions.interestDomain !== "none" && !r3.wantsToStop;
+  console.log(ok3 ? "PASS" : "FAIL");
   total++; if (ok3) passed++;
 
-  // Case 4: "I always want to be the one in control" — also self-referential
-  const ok4 = await runCase(
-    "Case 4 — 'I always want to be the one in control' (direct self-statement → ready)",
-    [...chessContext, { role: "assistant" as const, content: "What is it about the queen that draws you in?" }],
-    "I always want to be the one in control and the queen is the only piece that actually can be",
-    "rich-ready-to-deepen",
-  );
+  // Case 4: classifier — "I want to stop" → wantsToStop=true
+  sep("Case 4 — Explicit stop signal detected");
+  const r4 = await classifyTurn("9-12", chessContext, "I don't want to do this anymore, I want to stop");
+  console.log("Result:", JSON.stringify(r4, null, 2));
+  const ok4 = r4.wantsToStop === true;
+  console.log(ok4 ? "PASS" : "FAIL");
   total++; if (ok4) passed++;
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`Chess regression: ${passed}/${total} cases passed`);
   console.log("=".repeat(60) + "\n");
-
   if (passed < total) process.exit(1);
 }
 

@@ -1,4 +1,4 @@
-import { anthropic } from "@ai-sdk/anthropic";
+﻿import { anthropic } from "@ai-sdk/anthropic";
 import { propagateAttributes } from "@langfuse/tracing";
 import { generateObject, generateText, streamText, type ModelMessage } from "ai";
 import { NextResponse, after } from "next/server";
@@ -7,20 +7,15 @@ import { createClient } from "@/utils/supabase/server";
 import {
   buildPostClosingSystemPrompt,
   buildSystemPrompt,
-  getAct,
-  getActCount,
   isAgeBand,
-  isClosingTurn,
   isFillerMessage,
-  minRepliesFor,
-  MAX_NUDGES_PER_ACT,
-  INITIAL_ACT_STATE,
-  type ActState,
+  DIMENSION_KEYS,
+  INITIAL_CONVERSATION_STATE,
+  type ConversationState,
   type AgeBand,
-  type ReplySituation,
 } from "@/lib/aiko/conversation";
 import type { TranscriptMessage } from "@/lib/aiko/persist";
-import { judgeReply } from "@/lib/aiko/judge";
+import { classifyTurn } from "@/lib/aiko/judge";
 import { profileSchema, type Profile } from "@/lib/aiko/profile";
 import { getSession, logModerationEvent, upsertSession } from "@/lib/aiko/persist";
 import {
@@ -36,9 +31,6 @@ import { langfuseSpanProcessor } from "@/instrumentation";
 
 export const maxDuration = 30;
 
-// Hard ceiling on raw message count per session. A real conversation never
-// gets close to this; it exists to bound cost/abuse from a client sending an
-// arbitrarily long fabricated history directly against the API.
 const MAX_MESSAGES = 60;
 const MODEL_TIMEOUT_MS = 20_000;
 
@@ -51,20 +43,59 @@ function textResponse(text: string, headers?: Record<string, string>) {
   return new NextResponse(text, { headers: { "Content-Type": "text/plain; charset=utf-8", ...headers } });
 }
 
-function normalizeState(raw: unknown): ActState {
-  const s = (raw ?? {}) as Partial<ActState>;
+function normalizeDimension(raw: unknown): ConversationState["dimensions"]["interestDomain"] {
+  const VALID = ["none", "thin", "rich"] as const;
+  const d = (raw ?? {}) as { richness?: unknown; lastTurnIndex?: unknown };
   return {
-    actIndex: s.actIndex ?? 0,
-    nudgeCount: s.nudgeCount ?? 0,
-    satisfiedCount: s.satisfiedCount ?? 0,
+    richness: VALID.includes(d.richness as "none") ? (d.richness as "none" | "thin" | "rich") : "none",
+    lastTurnIndex: typeof d.lastTurnIndex === "number" ? d.lastTurnIndex : null,
   };
 }
 
-function progressHeaders(ageBand: AgeBand, state: ActState, closing: boolean) {
+function normalizeDimensions(raw: unknown): ConversationState["dimensions"] {
+  const d = (raw ?? {}) as Partial<ConversationState["dimensions"]>;
   return {
-    "X-Aiko-Closing": String(closing),
-    "X-Aiko-Act-Index": String(state.actIndex),
-    "X-Aiko-Act-Count": String(getActCount(ageBand)),
+    interestDomain:   normalizeDimension(d.interestDomain),
+    naturalStrength:  normalizeDimension(d.naturalStrength),
+    realSelfSignal:   normalizeDimension(d.realSelfSignal),
+    purposeDirection: normalizeDimension(d.purposeDirection),
+    paceStyle:        normalizeDimension(d.paceStyle),
+  };
+}
+
+function normalizeState(raw: unknown): ConversationState {
+  const s = (raw ?? {}) as Record<string, unknown>;
+  // Old shape (pre-rewrite): had actIndex — restart clean rather than crash.
+  if ("actIndex" in s) {
+    return {
+      turnCount: 0,
+      dimensions: {
+        interestDomain:   { richness: "none", lastTurnIndex: null },
+        naturalStrength:  { richness: "none", lastTurnIndex: null },
+        realSelfSignal:   { richness: "none", lastTurnIndex: null },
+        purposeDirection: { richness: "none", lastTurnIndex: null },
+        paceStyle:        { richness: "none", lastTurnIndex: null },
+      },
+      consecutiveLowContentTurns: 0,
+      endedReason: "ongoing",
+    };
+  }
+  const conv = s as Partial<ConversationState>;
+  return {
+    turnCount: typeof conv.turnCount === "number" ? conv.turnCount : 0,
+    dimensions: normalizeDimensions(conv.dimensions),
+    consecutiveLowContentTurns:
+      typeof conv.consecutiveLowContentTurns === "number" ? conv.consecutiveLowContentTurns : 0,
+    endedReason: (conv.endedReason as ConversationState["endedReason"]) ?? "ongoing",
+  };
+}
+
+function progressHeaders(state: ConversationState, isClosing: boolean) {
+  const touchedCount = DIMENSION_KEYS.filter((k) => state.dimensions[k].richness !== "none").length;
+  return {
+    "X-Aiko-Closing": String(isClosing),
+    "X-Aiko-Turn-Count": String(state.turnCount),
+    "X-Aiko-Dimensions-Touched": String(touchedCount),
   };
 }
 
@@ -87,7 +118,7 @@ async function extractProfile(
         schema: profileSchema,
         system:
           "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a structured profile across five dimensions. Generic values are a failure state — a phrase like \"curious learner\" or \"enjoys learning\" could describe any student and is not acceptable; every value must be specific enough that it could only describe this particular student, grounded in something they actually said. " +
-          "CRITICAL: if a dimension was not genuinely touched on in the conversation, return null for both the dimension value and its confidence — do NOT infer a plausible-sounding value from thin air. null means 'we don't actually know this yet,' not 'low confidence guess.' " +
+          "CRITICAL: if a dimension was not genuinely touched on in the conversation, return null for both the dimension value and its confidence — do NOT infer a plausible-sounding value from thin air. null means 'we do not actually know this yet,' not 'low confidence guess.' " +
           "Never diagnose or use clinical language.",
         prompt: `Conversation transcript:\n\n${transcript.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
         experimental_telemetry: { isEnabled: true },
@@ -117,11 +148,6 @@ export async function POST(request: Request) {
   }
 
   const { ageBand, messages } = body;
-
-  // One persistent session per user — there is never more than one row per
-  // user in aikoSessions, so the user's id doubles as the session id. This
-  // means a returning user always resumes the same conversation rather than
-  // starting a fresh, disconnected one.
   const sessionId = user.id;
 
   if (!isAgeBand(ageBand)) {
@@ -137,18 +163,18 @@ export async function POST(request: Request) {
     return textResponse(FALLBACK_CLOSING_MESSAGE);
   }
 
-  // The structured reflection already finished. There's no "start over" —
-  // the student just keeps talking to Aiko in the same thread. If the
-  // client hasn't sent anything new since the last persisted turn, this is
-  // just a reload/duplicate request: replay the saved message instead of
-  // re-running the model. Otherwise, continue the conversation naturally.
+  // The reflection already finished. The child just keeps talking in the same
+  // thread. If nothing new since last persist, replay the last assistant message.
   if (existingSession?.completedAt) {
     const storedTranscript = existingSession.transcript as TranscriptMessage[];
     const closedState = normalizeState(existingSession.state);
 
     if (messages.length <= storedTranscript.length) {
       const lastAssistantMessage = [...storedTranscript].reverse().find((m) => m.role === "assistant");
-      return textResponse(lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE, progressHeaders(ageBand, closedState, false));
+      return textResponse(
+        lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE,
+        progressHeaders(closedState, false),
+      );
     }
 
     const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
@@ -178,12 +204,7 @@ export async function POST(request: Request) {
     const modelMessages: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
 
     const response = await propagateAttributes(
-      {
-        traceName: "aiko-chat-turn",
-        sessionId,
-        userId: user.id,
-        tags: ["aiko", `age-${ageBand}`, "post-closing-chat"],
-      },
+      { traceName: "aiko-chat-turn", sessionId, userId: user.id, tags: ["aiko", `age-${ageBand}`, "post-closing-chat"] },
       async () => {
         try {
           const result = streamText({
@@ -212,8 +233,7 @@ export async function POST(request: Request) {
               console.error("Post-closing chat streaming failed:", error);
             },
           });
-
-          return result.toTextStreamResponse({ headers: progressHeaders(ageBand, closedState, false) });
+          return result.toTextStreamResponse({ headers: progressHeaders(closedState, false) });
         } catch (err) {
           console.error("Post-closing chat generation failed to start:", err);
           return textResponse(FALLBACK_ACT_MESSAGE);
@@ -225,7 +245,12 @@ export async function POST(request: Request) {
     return response;
   }
 
-  const currentState: ActState = existingSession ? normalizeState(existingSession.state) : INITIAL_ACT_STATE;
+  // ── Active conversation ────────────────────────────────────────────────────
+
+  const currentState: ConversationState = existingSession
+    ? normalizeState(existingSession.state)
+    : { ...INITIAL_CONVERSATION_STATE, dimensions: { ...INITIAL_CONVERSATION_STATE.dimensions } };
+
   const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
 
   if (latestUserMessage) {
@@ -237,8 +262,6 @@ export async function POST(request: Request) {
       return textResponse(SELF_HARM_RESPONSE);
     }
     if (moderation.flagged) {
-      // Count prior redirect messages already in the client-sent history so we
-      // can escalate on repeat violations without a schema change.
       const priorRedirects = messages.filter(
         (m) => m.role === "assistant" && (m.content === CALM_REDIRECT_MESSAGE || m.content === CALM_REDIRECT_ESCALATED_MESSAGE),
       ).length;
@@ -252,99 +275,75 @@ export async function POST(request: Request) {
     }
   }
 
-  // Judge whether the latest reply actually satisfies what this act needs,
-  // rather than assuming any non-empty reply is good enough. A reply that
-  // falls short earns a nudge (with an example on the second attempt)
-  // instead of silently advancing past it. And a reply that IS good still
-  // isn't enough on its own — "sleeping" or "winning" is genuine but too
-  // thin to build a real, specific profile signal from, so each territory
-  // (other than Mirror) needs multiple good exchanges before moving on.
-  let nextState: ActState = currentState;
-  let nudge: { situation: ReplySituation } | undefined;
-  let deepen: { richness?: "thin" | "rich-needs-anchoring" | "rich-ready-to-deepen" } | undefined;
+  // Classify this exchange: which dimensions did it touch, does the child want to stop?
+  let nextState: ConversationState = currentState;
+  let wantsToStop = false;
+  let isClosing = false;
 
   if (latestUserMessage) {
-    const act = getAct(ageBand, currentState.actIndex);
-    if (act) {
-      const judgment = await judgeReply(ageBand, act, messages.slice(0, -1), latestUserMessage.content);
-      const minReplies = minRepliesFor(act);
+    const classification = await classifyTurn(ageBand, messages.slice(0, -1), latestUserMessage.content);
 
-      if (judgment.situation === "wants-to-stop") {
-        // Ending gracefully overrides everything else — doesn't consume a
-        // nudge and doesn't force-advance. They can pick the same question
-        // back up naturally whenever they reply again.
-        nextState = currentState;
-        nudge = { situation: "wants-to-stop" };
-      } else if (judgment.satisfied) {
-        const satisfiedCount = currentState.satisfiedCount + 1;
-        if (satisfiedCount >= minReplies) {
-          nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0, satisfiedCount: 0 };
-        } else {
-          // Good answer, but not enough depth yet — ask to go deeper on the
-          // same territory instead of moving on. Counts toward the nudge
-          // budget too, so we can never stall forever on one territory.
-          nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount };
-          deepen = { richness: judgment.richness };
-        }
-      } else if (currentState.nudgeCount < MAX_NUDGES_PER_ACT) {
-        nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount: currentState.satisfiedCount };
-        nudge = { situation: judgment.situation };
-      } else {
-        // Already nudged the max number of times — move on rather than stall.
-        nextState = { actIndex: currentState.actIndex + 1, nudgeCount: 0, satisfiedCount: 0 };
+    const RICHNESS_RANK: Record<string, number> = { none: 0, thin: 1, rich: 2 };
+    const newTurnCount = currentState.turnCount + 1;
+    const newDimensions = { ...currentState.dimensions };
+
+    for (const key of DIMENSION_KEYS) {
+      const incoming = classification.dimensions[key];
+      if (RICHNESS_RANK[incoming] > RICHNESS_RANK[currentState.dimensions[key].richness]) {
+        newDimensions[key] = { richness: incoming, lastTurnIndex: newTurnCount };
       }
     }
+
+    // Track low-content turns for breathe behavior only — never for closing.
+    const preceding = messages.slice(0, -1).reverse().find((m) => m.role === "assistant");
+    const isLowContent = isFillerMessage(latestUserMessage.content, preceding?.content);
+    const consecutiveLowContentTurns = isLowContent ? currentState.consecutiveLowContentTurns + 1 : 0;
+
+    wantsToStop = classification.wantsToStop;
+    isClosing = wantsToStop || messages.length >= MAX_MESSAGES;
+
+    const endedReason: ConversationState["endedReason"] = wantsToStop
+      ? "child-signaled-done"
+      : messages.length >= MAX_MESSAGES
+      ? "max-turns-safety-valve"
+      : "ongoing";
+
+    nextState = {
+      turnCount: newTurnCount,
+      dimensions: newDimensions,
+      consecutiveLowContentTurns,
+      endedReason,
+    };
   }
 
-  // Detect disengagement: 2+ consecutive user messages that are very short
-  // or pure filler. When this pattern is present, Aiko should react warmly
-  // and leave space — no question — rather than pushing harder.
-  // isFillerMessage is context-aware: a "nah/yes" answering a yes/no question
-  // is genuine, not filler. We pass the assistant message that preceded each
-  // user message so the check can tell them apart.
-  const consecutiveFillerCount = (() => {
-    let count = 0;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== "user") continue;
-      const preceding = messages.slice(0, i).reverse().find((p) => p.role === "assistant");
-      if (isFillerMessage(m.content, preceding?.content)) count++;
-      else break;
-      if (count >= 3) break;
-    }
-    return count;
-  })();
-  const breathe = consecutiveFillerCount >= 2 && !nudge;
+  // Breathe: 2+ consecutive low-content turns → leave space, no question.
+  const breathe = nextState.consecutiveLowContentTurns >= 2 && !isClosing;
 
-  const system = buildSystemPrompt({ ageBand, state: nextState, nudge, deepen, breathe });
-  const closingTurn = isClosingTurn(ageBand, nextState.actIndex);
+  const system = buildSystemPrompt({ ageBand, state: nextState, wantsToStop, breathe, isClosing });
 
-  const modelMessages: ModelMessage[] = messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
-
-  // The model needs at least one message; seed the very first turn so Aiko
-  // opens the conversation without the client having to send a fake message.
+  const modelMessages: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
   if (modelMessages.length === 0) {
     modelMessages.push({ role: "user", content: "Let's begin." });
   }
+
+  const turnTag = isClosing
+    ? `closing-${nextState.endedReason}`
+    : breathe
+    ? "breathe-turn"
+    : wantsToStop
+    ? "wants-to-stop"
+    : `turn-${nextState.turnCount}`;
 
   const response = await propagateAttributes(
     {
       traceName: "aiko-chat-turn",
       sessionId,
       userId: user.id,
-      tags: [
-        "aiko",
-        `age-${ageBand}`,
-        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : deepen ? `deepen-turn-${deepen.richness ?? "thin"}` : "act-turn",
-      ],
+      tags: ["aiko", `age-${ageBand}`, turnTag],
     },
     async () => {
-      // The closing turn must never ask a question. Models occasionally slip a
-      // question in anyway, so generate up-front and retry once before replying.
-      if (closingTurn) {
+      // Closing turn: generate up-front, retry if a question mark slips in.
+      if (isClosing) {
         let text: string;
         try {
           text = (
@@ -377,24 +376,15 @@ export async function POST(request: Request) {
 
         try {
           const profile = await extractProfile(ageBand, sessionId, user.id, transcript);
-          await upsertSession({
-            sessionId,
-            userId: user.id,
-            ageBand,
-            transcript,
-            state: nextState,
-            profile,
-            completed: true,
-          });
+          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, profile, completed: true });
         } catch (err) {
           console.error("Profile extraction or persistence failed:", err);
-          // Still persist the transcript even if extraction failed.
           await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: true }).catch(
             (persistErr) => console.error("Transcript persistence also failed:", persistErr),
           );
         }
 
-        return textResponse(text, progressHeaders(ageBand, nextState, true));
+        return textResponse(text, progressHeaders(nextState, true));
       }
 
       try {
@@ -416,17 +406,14 @@ export async function POST(request: Request) {
             console.error("Act turn streaming failed:", error);
           },
         });
-
-        return result.toTextStreamResponse({ headers: progressHeaders(ageBand, nextState, false) });
+        return result.toTextStreamResponse({ headers: progressHeaders(nextState, false) });
       } catch (err) {
-        console.error("Act turn generation failed to start:", err);
+        console.error("Turn generation failed to start:", err);
         return textResponse(FALLBACK_ACT_MESSAGE);
       }
     },
   );
 
-  // Critical for serverless: flush spans before the function terminates.
   after(async () => await langfuseSpanProcessor.forceFlush());
-
   return response;
 }
