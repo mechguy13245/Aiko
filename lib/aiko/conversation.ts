@@ -30,14 +30,14 @@ export function isAgeBand(value: unknown): value is AgeBand {
   return typeof value === "string" && (AGE_BANDS as string[]).includes(value);
 }
 
-export const MAX_NUDGES_PER_ACT = 4;
+export const MAX_NUDGES_PER_ACT = 10;
 
 // A single valid, on-topic answer isn't enough signal for a real profile —
 // "sleeping" or "winning" might be completely genuine, but it's too thin to
 // build a specific, non-generic profile dimension from. Each territory (other
 // than Mirror, which is a confirmation, not an exploration) needs at least
 // this many genuinely good exchanges before moving on.
-export const MIN_SATISFACTORY_REPLIES_PER_ACT = 2;
+export const MIN_SATISFACTORY_REPLIES_PER_ACT = 5;
 
 const SHARED_GUARDRAILS = `
 You are Aiko, a warm, curious companion who helps students reveal who they actually are — their real interests, strengths, and motivations — as distinct from who they perform to be for parents, teachers, and peers.
