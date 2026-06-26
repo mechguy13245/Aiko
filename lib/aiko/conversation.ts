@@ -168,7 +168,6 @@ Only if the current thread feels genuinely exhausted — the child has nothing m
 export interface BuildSystemPromptArgs {
   ageBand: AgeBand;
   state: ConversationState;
-  wantsToStop?: boolean;
   breathe?: boolean;
   isClosing?: boolean;
 }
@@ -176,20 +175,15 @@ export interface BuildSystemPromptArgs {
 export function buildSystemPrompt({
   ageBand,
   state,
-  wantsToStop,
   breathe,
   isClosing,
 }: BuildSystemPromptArgs): string {
   const config = AGE_BAND_CONFIG[ageBand];
   const voiceBlock = `Persona: ${config.persona} (age band ${ageBand}). Voice: ${config.voice}`;
 
-  if (wantsToStop) {
-    return [
-      SHARED_GUARDRAILS,
-      voiceBlock,
-      "The child just signaled they want to stop or are done. End gracefully and immediately: no question, no pushing back. Warmly acknowledge it is fine to stop, thank them for what they shared, and let them know they can return anytime. No question mark anywhere in your response.",
-    ].join("\n\n");
-  }
+  // wantsToStop is no longer a pre-dialog flag. The model closes naturally when
+  // the child signals they want to stop, guided by the final guardrail in
+  // SHARED_GUARDRAILS. Detection happens post-turn via classifyTurn in onFinish.
 
   if (isClosing) {
     return [

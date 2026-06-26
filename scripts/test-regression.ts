@@ -125,6 +125,26 @@ function testPromptStructure(): number {
   console.log(hasPrinciple7 ? "PASS" : "FAIL");
   total++; if (hasPrinciple7) passed++;
 
+  // Test 9: sustained thread — for turns 1-9 the system prompt contains no
+  // directive to switch topics or close. The single dialog LLM decides on its own.
+  sep("Test 9 — Sustained thread: no redirect directive in normal turns 1-9");
+  let t9 = true;
+  for (let turn = 1; turn <= 9; turn++) {
+    const state = makeState({ turnCount: turn });
+    const prompt = buildSystemPrompt({ ageBand: "9-12", state });
+    const hasBackstop = prompt.includes("SOFT BACKSTOP");
+    const hasForceSwitch = prompt.includes("you must") || prompt.includes("move to a new") || prompt.includes("you need to move") || prompt.includes("switch to");
+    // No wantsToStop branch exists (removed in single-LLM rewrite)
+    const hasWantsToStopBranch = prompt.includes("The child just signaled they want to stop");
+    if (hasBackstop || hasForceSwitch || hasWantsToStopBranch) {
+      console.log(`  Turn ${turn}: FAIL — unexpected directive found (backstop: ${hasBackstop}, force: ${hasForceSwitch}, wantsToStop: ${hasWantsToStopBranch})`);
+      t9 = false;
+    }
+  }
+  if (t9) console.log("  Turns 1-9: no redirect or force-switch directives present");
+  console.log(t9 ? "PASS" : "FAIL");
+  total++; if (t9) passed++;
+
   return passed / total;
 }
 
@@ -167,7 +187,7 @@ async function testClassifier(): Promise<number> {
 
 async function main() {
   const promptScore = testPromptStructure();
-  console.log(`\nPrompt structure tests: ${Math.round(promptScore * 6)}/6 passed`);
+  console.log(`\nPrompt structure tests: ${Math.round(promptScore * 7)}/7 passed`);
 
   console.log("\nRunning classifier tests (requires ANTHROPIC_API_KEY)...");
   try {

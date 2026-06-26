@@ -1,4 +1,4 @@
-﻿import { anthropic } from "@ai-sdk/anthropic";
+import { anthropic } from "@ai-sdk/anthropic";
 import { propagateAttributes } from "@langfuse/tracing";
 import { generateObject, generateText, streamText, type ModelMessage } from "ai";
 import { NextResponse, after } from "next/server";
@@ -33,6 +33,7 @@ export const maxDuration = 30;
 
 const MAX_MESSAGES = 60;
 const MODEL_TIMEOUT_MS = 20_000;
+const RICHNESS_RANK: Record<string, number> = { none: 0, thin: 1, rich: 2 };
 
 interface ChatRequestBody {
   ageBand: string;
@@ -90,12 +91,11 @@ function normalizeState(raw: unknown): ConversationState {
   };
 }
 
-function progressHeaders(state: ConversationState, isClosing: boolean) {
-  const touchedCount = DIMENSION_KEYS.filter((k) => state.dimensions[k].richness !== "none").length;
+function progressHeaders(turnCount: number, dimensionsTouched: number, isClosing: boolean) {
   return {
     "X-Aiko-Closing": String(isClosing),
-    "X-Aiko-Turn-Count": String(state.turnCount),
-    "X-Aiko-Dimensions-Touched": String(touchedCount),
+    "X-Aiko-Turn-Count": String(turnCount),
+    "X-Aiko-Dimensions-Touched": String(dimensionsTouched),
   };
 }
 
@@ -163,17 +163,17 @@ export async function POST(request: Request) {
     return textResponse(FALLBACK_CLOSING_MESSAGE);
   }
 
-  // The reflection already finished. The child just keeps talking in the same
-  // thread. If nothing new since last persist, replay the last assistant message.
+  // ── Post-closing: conversation already finished ───────────────────────────
   if (existingSession?.completedAt) {
     const storedTranscript = existingSession.transcript as TranscriptMessage[];
     const closedState = normalizeState(existingSession.state);
+    const closedTouched = DIMENSION_KEYS.filter((k) => closedState.dimensions[k].richness !== "none").length;
 
     if (messages.length <= storedTranscript.length) {
       const lastAssistantMessage = [...storedTranscript].reverse().find((m) => m.role === "assistant");
       return textResponse(
         lastAssistantMessage?.content ?? FALLBACK_CLOSING_MESSAGE,
-        progressHeaders(closedState, false),
+        progressHeaders(closedState.turnCount, closedTouched, false),
       );
     }
 
@@ -233,7 +233,7 @@ export async function POST(request: Request) {
               console.error("Post-closing chat streaming failed:", error);
             },
           });
-          return result.toTextStreamResponse({ headers: progressHeaders(closedState, false) });
+          return result.toTextStreamResponse({ headers: progressHeaders(closedState.turnCount, closedTouched, false) });
         } catch (err) {
           console.error("Post-closing chat generation failed to start:", err);
           return textResponse(FALLBACK_ACT_MESSAGE);
@@ -275,64 +275,96 @@ export async function POST(request: Request) {
     }
   }
 
-  // Classify this exchange: which dimensions did it touch, does the child want to stop?
-  let nextState: ConversationState = currentState;
-  let wantsToStop = false;
-  let isClosing = false;
+  // Breathe detection — pure heuristic, no model call. Counts consecutive
+  // low-content turns and lets the dialog model leave space without a question.
+  const preceding = messages.slice(0, -1).reverse().find((m) => m.role === "assistant");
+  const isLowContent = latestUserMessage
+    ? isFillerMessage(latestUserMessage.content, preceding?.content)
+    : false;
+  const newConsecutiveLowContent = isLowContent ? currentState.consecutiveLowContentTurns + 1 : 0;
+  const breathe = newConsecutiveLowContent >= 2;
 
-  if (latestUserMessage) {
-    const classification = await classifyTurn(ageBand, messages.slice(0, -1), latestUserMessage.content);
+  // ── MAX_MESSAGES safety valve (forced close, not classifier-driven) ─────────
+  if (messages.length >= MAX_MESSAGES) {
+    const closingState: ConversationState = {
+      ...currentState,
+      turnCount: currentState.turnCount + 1,
+      endedReason: "max-turns-safety-valve",
+    };
+    const closingSystem = buildSystemPrompt({ ageBand, state: closingState, isClosing: true });
+    const modelMessages: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
+    if (modelMessages.length === 0) modelMessages.push({ role: "user", content: "Let's begin." });
 
-    const RICHNESS_RANK: Record<string, number> = { none: 0, thin: 1, rich: 2 };
-    const newTurnCount = currentState.turnCount + 1;
-    const newDimensions = { ...currentState.dimensions };
-
-    for (const key of DIMENSION_KEYS) {
-      const incoming = classification.dimensions[key];
-      if (RICHNESS_RANK[incoming] > RICHNESS_RANK[currentState.dimensions[key].richness]) {
-        newDimensions[key] = { richness: incoming, lastTurnIndex: newTurnCount };
+    let text: string;
+    try {
+      text = (
+        await generateText({
+          model: anthropic("claude-sonnet-4-6"),
+          system: closingSystem,
+          messages: modelMessages,
+          experimental_telemetry: { isEnabled: true },
+          abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+        })
+      ).text;
+      if (text.includes("?")) {
+        text = (
+          await generateText({
+            model: anthropic("claude-sonnet-4-6"),
+            system: `${closingSystem}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
+            messages: modelMessages,
+            experimental_telemetry: { isEnabled: true },
+            abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+          })
+        ).text;
       }
+    } catch (err) {
+      console.error("Forced closing turn generation failed:", err);
+      text = FALLBACK_CLOSING_MESSAGE;
     }
 
-    // Track low-content turns for breathe behavior only — never for closing.
-    const preceding = messages.slice(0, -1).reverse().find((m) => m.role === "assistant");
-    const isLowContent = isFillerMessage(latestUserMessage.content, preceding?.content);
-    const consecutiveLowContentTurns = isLowContent ? currentState.consecutiveLowContentTurns + 1 : 0;
+    const transcript = [...messages, { role: "assistant" as const, content: text }];
+    const closedTouched = DIMENSION_KEYS.filter((k) => closingState.dimensions[k].richness !== "none").length;
 
-    wantsToStop = classification.wantsToStop;
-    isClosing = wantsToStop || messages.length >= MAX_MESSAGES;
+    try {
+      const profile = await extractProfile(ageBand, sessionId, user.id, transcript);
+      await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: closingState, profile, completed: true });
+    } catch (err) {
+      console.error("Profile extraction or persistence failed:", err);
+      await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: closingState, completed: true }).catch(
+        (persistErr) => console.error("Transcript persistence also failed:", persistErr),
+      );
+    }
 
-    const endedReason: ConversationState["endedReason"] = wantsToStop
-      ? "child-signaled-done"
-      : messages.length >= MAX_MESSAGES
-      ? "max-turns-safety-valve"
-      : "ongoing";
-
-    nextState = {
-      turnCount: newTurnCount,
-      dimensions: newDimensions,
-      consecutiveLowContentTurns,
-      endedReason,
-    };
+    after(async () => await langfuseSpanProcessor.forceFlush());
+    return textResponse(text, progressHeaders(closingState.turnCount, closedTouched, true));
   }
 
-  // Breathe: 2+ consecutive low-content turns → leave space, no question.
-  const breathe = nextState.consecutiveLowContentTurns >= 2 && !isClosing;
+  // ── Normal turn: single model call (Section-Based Dialog Policy, single-LLM) ─
+  //
+  // Architecture: one streamText call per turn, no pre-dialog classifier.
+  // The dialog model sees the full conversation, the current dimension context
+  // (as advisory backstop once turn >= 10), and decides on its own whether to
+  // stay on the current thread or gently shift topic. If the child signals they
+  // want to stop, the model closes gracefully guided by SHARED_GUARDRAILS.
+  //
+  // After streaming completes, classifyTurn runs in onFinish to update dimension
+  // state for the NEXT turn's backstop context, and to detect if the child
+  // signaled they want to stop (triggering profile extraction). This never
+  // gates or forces the dialog model's choice — it is purely retrospective.
 
-  const system = buildSystemPrompt({ ageBand, state: nextState, wantsToStop, breathe, isClosing });
+  const system = buildSystemPrompt({ ageBand, state: currentState, breathe });
 
   const modelMessages: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
   if (modelMessages.length === 0) {
     modelMessages.push({ role: "user", content: "Let's begin." });
   }
 
-  const turnTag = isClosing
-    ? `closing-${nextState.endedReason}`
-    : breathe
-    ? "breathe-turn"
-    : wantsToStop
-    ? "wants-to-stop"
-    : `turn-${nextState.turnCount}`;
+  const turnTag = breathe ? "breathe-turn" : `turn-${currentState.turnCount + 1}`;
+
+  // Optimistic headers for this turn: turn count increments immediately,
+  // dimension-touched count reflects the accumulated state from previous turns
+  // (classification for this turn will update state in onFinish, visible next turn).
+  const currentTouched = DIMENSION_KEYS.filter((k) => currentState.dimensions[k].richness !== "none").length;
 
   const response = await propagateAttributes(
     {
@@ -342,51 +374,6 @@ export async function POST(request: Request) {
       tags: ["aiko", `age-${ageBand}`, turnTag],
     },
     async () => {
-      // Closing turn: generate up-front, retry if a question mark slips in.
-      if (isClosing) {
-        let text: string;
-        try {
-          text = (
-            await generateText({
-              model: anthropic("claude-sonnet-4-6"),
-              system,
-              messages: modelMessages,
-              experimental_telemetry: { isEnabled: true },
-              abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-            })
-          ).text;
-
-          if (text.includes("?")) {
-            text = (
-              await generateText({
-                model: anthropic("claude-sonnet-4-6"),
-                system: `${system}\n\nYour previous attempt included a question mark, which is not allowed. Rewrite it as pure statements.`,
-                messages: modelMessages,
-                experimental_telemetry: { isEnabled: true },
-                abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-              })
-            ).text;
-          }
-        } catch (err) {
-          console.error("Closing turn generation failed:", err);
-          text = FALLBACK_CLOSING_MESSAGE;
-        }
-
-        const transcript = [...messages, { role: "assistant" as const, content: text }];
-
-        try {
-          const profile = await extractProfile(ageBand, sessionId, user.id, transcript);
-          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, profile, completed: true });
-        } catch (err) {
-          console.error("Profile extraction or persistence failed:", err);
-          await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: true }).catch(
-            (persistErr) => console.error("Transcript persistence also failed:", persistErr),
-          );
-        }
-
-        return textResponse(text, progressHeaders(nextState, true));
-      }
-
       try {
         const result = streamText({
           model: anthropic("claude-sonnet-4-6"),
@@ -395,18 +382,59 @@ export async function POST(request: Request) {
           experimental_telemetry: { isEnabled: true },
           abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
           onFinish: async (finalResult) => {
+            const newTurnCount = currentState.turnCount + 1;
             const transcript = [...messages, { role: "assistant" as const, content: finalResult.text }];
-            try {
-              await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: false });
-            } catch (err) {
-              console.error("Transcript persistence failed:", err);
+
+            // Classify the turn post-response — never pre-response. This is the
+            // single-LLM pattern: the dialog model has already responded using its
+            // own judgment; classification now updates context for future turns only.
+            const classification = latestUserMessage
+              ? await classifyTurn(ageBand, messages.slice(0, -1), latestUserMessage.content)
+              : { dimensions: { interestDomain: "none" as const, naturalStrength: "none" as const, realSelfSignal: "none" as const, purposeDirection: "none" as const, paceStyle: "none" as const }, wantsToStop: false };
+
+            // Merge: keep highest richness seen for each dimension.
+            const newDimensions = { ...currentState.dimensions };
+            for (const key of DIMENSION_KEYS) {
+              const incoming = classification.dimensions[key];
+              if (RICHNESS_RANK[incoming] > RICHNESS_RANK[currentState.dimensions[key].richness]) {
+                newDimensions[key] = { richness: incoming, lastTurnIndex: newTurnCount };
+              }
+            }
+
+            const nextState: ConversationState = {
+              turnCount: newTurnCount,
+              dimensions: newDimensions,
+              consecutiveLowContentTurns: newConsecutiveLowContent,
+              endedReason: classification.wantsToStop ? "child-signaled-done" : "ongoing",
+            };
+
+            if (classification.wantsToStop) {
+              // Model already wrote a graceful close (SHARED_GUARDRAILS guides it
+              // to do so). Extract profile and mark the session complete.
+              try {
+                const profile = await extractProfile(ageBand, sessionId, user.id, transcript);
+                await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, profile, completed: true });
+              } catch (err) {
+                console.error("Profile extraction or persistence failed (wantsToStop):", err);
+                await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: true }).catch(
+                  (persistErr) => console.error("Transcript persistence also failed:", persistErr),
+                );
+              }
+            } else {
+              try {
+                await upsertSession({ sessionId, userId: user.id, ageBand, transcript, state: nextState, completed: false });
+              } catch (err) {
+                console.error("Transcript persistence failed:", err);
+              }
             }
           },
           onError: ({ error }) => {
-            console.error("Act turn streaming failed:", error);
+            console.error("Dialog turn streaming failed:", error);
           },
         });
-        return result.toTextStreamResponse({ headers: progressHeaders(nextState, false) });
+        return result.toTextStreamResponse({
+          headers: progressHeaders(currentState.turnCount + 1, currentTouched, false),
+        });
       } catch (err) {
         console.error("Turn generation failed to start:", err);
         return textResponse(FALLBACK_ACT_MESSAGE);
