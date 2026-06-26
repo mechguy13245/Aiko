@@ -35,7 +35,7 @@ export async function judgeReply(
 ): Promise<JudgeResult> {
   try {
     const { object } = await generateObject({
-      model: anthropic("claude-3-5-sonnet-latest"),
+      model: anthropic("claude-sonnet-4-6"),
       schema: judgeSchema,
       system:
         `You judge a single reply from a student (age band ${ageBand}) in a reflective conversation. ` +
