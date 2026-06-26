@@ -11,6 +11,7 @@ import {
   getActCount,
   isAgeBand,
   isClosingTurn,
+  isFillerMessage,
   minRepliesFor,
   MAX_NUDGES_PER_ACT,
   INITIAL_ACT_STATE,
@@ -21,7 +22,7 @@ import {
 import type { TranscriptMessage } from "@/lib/aiko/persist";
 import { judgeReply } from "@/lib/aiko/judge";
 import { profileSchema, type Profile } from "@/lib/aiko/profile";
-import { getSession, upsertSession } from "@/lib/aiko/persist";
+import { getSession, logModerationEvent, upsertSession } from "@/lib/aiko/persist";
 import {
   checkModeration,
   FALLBACK_ACT_MESSAGE,
@@ -85,7 +86,9 @@ async function extractProfile(
         model: anthropic("claude-sonnet-4-6"),
         schema: profileSchema,
         system:
-          "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a structured profile across five dimensions. Generic values are a failure state — a phrase like \"curious learner\" or \"enjoys learning\" could describe any student and is not acceptable; every value must be specific enough that it could only describe this particular student, grounded in something they actually said. Confidence should be low (0.3-0.5) rather than inflated if the conversation didn't give you much to go on for that dimension. Never diagnose or use clinical language.",
+          "You analyze a completed reflection conversation between Aiko (an AI companion) and a student, and extract a structured profile across five dimensions. Generic values are a failure state — a phrase like \"curious learner\" or \"enjoys learning\" could describe any student and is not acceptable; every value must be specific enough that it could only describe this particular student, grounded in something they actually said. " +
+          "CRITICAL: if a dimension was not genuinely touched on in the conversation, return null for both the dimension value and its confidence — do NOT infer a plausible-sounding value from thin air. null means 'we don't actually know this yet,' not 'low confidence guess.' " +
+          "Never diagnose or use clinical language.",
         prompt: `Conversation transcript:\n\n${transcript.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
         experimental_telemetry: { isEnabled: true },
         abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
@@ -151,11 +154,20 @@ export async function POST(request: Request) {
     const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
     if (latestUserMessage) {
       const moderation = await checkModeration(latestUserMessage.content);
-      if (moderation.selfHarm) return textResponse(SELF_HARM_RESPONSE);
+      if (moderation.selfHarm) {
+        logModerationEvent({ sessionId, userId: user.id, ageBand, tier: "self-harm", flaggedContent: latestUserMessage.content }).catch((err) =>
+          console.error("Moderation event logging failed:", err),
+        );
+        return textResponse(SELF_HARM_RESPONSE);
+      }
       if (moderation.flagged) {
         const priorRedirects = messages.filter(
           (m) => m.role === "assistant" && (m.content === CALM_REDIRECT_MESSAGE || m.content === CALM_REDIRECT_ESCALATED_MESSAGE),
         ).length;
+        const tier = priorRedirects >= 2 ? "paused" : priorRedirects >= 1 ? "escalated" : "calm";
+        logModerationEvent({ sessionId, userId: user.id, ageBand, tier, flaggedContent: latestUserMessage.content }).catch((err) =>
+          console.error("Moderation event logging failed:", err),
+        );
         if (priorRedirects >= 2) return textResponse(SESSION_PAUSED_MESSAGE);
         if (priorRedirects >= 1) return textResponse(CALM_REDIRECT_ESCALATED_MESSAGE);
         return textResponse(CALM_REDIRECT_MESSAGE);
@@ -219,6 +231,9 @@ export async function POST(request: Request) {
   if (latestUserMessage) {
     const moderation = await checkModeration(latestUserMessage.content);
     if (moderation.selfHarm) {
+      logModerationEvent({ sessionId, userId: user.id, ageBand, tier: "self-harm", flaggedContent: latestUserMessage.content }).catch((err) =>
+        console.error("Moderation event logging failed:", err),
+      );
       return textResponse(SELF_HARM_RESPONSE);
     }
     if (moderation.flagged) {
@@ -227,6 +242,10 @@ export async function POST(request: Request) {
       const priorRedirects = messages.filter(
         (m) => m.role === "assistant" && (m.content === CALM_REDIRECT_MESSAGE || m.content === CALM_REDIRECT_ESCALATED_MESSAGE),
       ).length;
+      const tier = priorRedirects >= 2 ? "paused" : priorRedirects >= 1 ? "escalated" : "calm";
+      logModerationEvent({ sessionId, userId: user.id, ageBand, tier, flaggedContent: latestUserMessage.content }).catch((err) =>
+        console.error("Moderation event logging failed:", err),
+      );
       if (priorRedirects >= 2) return textResponse(SESSION_PAUSED_MESSAGE);
       if (priorRedirects >= 1) return textResponse(CALM_REDIRECT_ESCALATED_MESSAGE);
       return textResponse(CALM_REDIRECT_MESSAGE);
@@ -242,7 +261,7 @@ export async function POST(request: Request) {
   // (other than Mirror) needs multiple good exchanges before moving on.
   let nextState: ActState = currentState;
   let nudge: { situation: ReplySituation } | undefined;
-  let deepen = false;
+  let deepen: { richness?: "thin" | "rich-needs-anchoring" | "rich-ready-to-deepen" } | undefined;
 
   if (latestUserMessage) {
     const act = getAct(ageBand, currentState.actIndex);
@@ -265,7 +284,7 @@ export async function POST(request: Request) {
           // same territory instead of moving on. Counts toward the nudge
           // budget too, so we can never stall forever on one territory.
           nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount };
-          deepen = true;
+          deepen = { richness: judgment.richness };
         }
       } else if (currentState.nudgeCount < MAX_NUDGES_PER_ACT) {
         nextState = { actIndex: currentState.actIndex, nudgeCount: currentState.nudgeCount + 1, satisfiedCount: currentState.satisfiedCount };
@@ -280,13 +299,18 @@ export async function POST(request: Request) {
   // Detect disengagement: 2+ consecutive user messages that are very short
   // or pure filler. When this pattern is present, Aiko should react warmly
   // and leave space — no question — rather than pushing harder.
-  const recentUserMessages = messages.filter((m) => m.role === "user").slice(-3);
-  const isFillerMessage = (text: string) => text.trim().length < 10 || /^(idk|idk\.|dunno|yeah|yep|nope|nah|ok|okay|lol|haha|hm+|hmm+|\.\.\.|no|yes|fine|sure|meh|uh|uhh|umm?)\.?$/i.test(text.trim());
+  // isFillerMessage is context-aware: a "nah/yes" answering a yes/no question
+  // is genuine, not filler. We pass the assistant message that preceded each
+  // user message so the check can tell them apart.
   const consecutiveFillerCount = (() => {
     let count = 0;
-    for (const m of [...recentUserMessages].reverse()) {
-      if (isFillerMessage(m.content)) count++;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "user") continue;
+      const preceding = messages.slice(0, i).reverse().find((p) => p.role === "assistant");
+      if (isFillerMessage(m.content, preceding?.content)) count++;
       else break;
+      if (count >= 3) break;
     }
     return count;
   })();
@@ -314,7 +338,7 @@ export async function POST(request: Request) {
       tags: [
         "aiko",
         `age-${ageBand}`,
-        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : deepen ? "deepen-turn" : "act-turn",
+        closingTurn ? "closing-turn" : nudge ? "nudge-turn" : deepen ? `deepen-turn-${deepen.richness ?? "thin"}` : "act-turn",
       ],
     },
     async () => {
