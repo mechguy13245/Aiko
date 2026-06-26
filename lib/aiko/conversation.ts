@@ -131,7 +131,7 @@ export const AGE_BAND_CONFIG: Record<AgeBand, AgeBandConfig> = {
         name: "Mirror / confirmation",
         topLevelQuestion: "Here's what I noticed about you — does that sound right?",
         goal: "Reflect a specific, warm pattern noticed across the conversation, and ask if it sounds right to them.",
-        successCriteria: "Any real reaction to the reflection — confirming, correcting, or adding to it. A flat one-word non-answer doesn't count.",
+        successCriteria: "A real reaction that confirms, corrects, or adds something specific to the reflection — not just a flat agreement like \"yeah\" or \"I guess.\" The reaction must show the student has actually processed what was reflected back.",
         examples: ["yeah that sounds like me", "kind of, but I also...", "no, it's actually more like..."],
         isMirror: true,
       },
@@ -179,7 +179,7 @@ export const AGE_BAND_CONFIG: Record<AgeBand, AgeBandConfig> = {
         name: "Mirror / confirmation",
         topLevelQuestion: "Here's what this conversation revealed about you — how does that land?",
         goal: "Reflect a specific, warm pattern noticed across the conversation, and ask how it lands with them.",
-        successCriteria: "Any real reaction to the reflection — confirming, correcting, or adding to it. A flat one-word non-answer doesn't count.",
+        successCriteria: "A real reaction that confirms, corrects, or adds something specific to the reflection — not just a flat agreement like \"yeah\" or \"sounds right.\" The reaction must show the student has actually processed what was reflected back.",
         examples: ["yeah that's pretty accurate", "kind of, but there's more to it", "not really, it's more like..."],
         isMirror: true,
       },
@@ -227,7 +227,7 @@ export const AGE_BAND_CONFIG: Record<AgeBand, AgeBandConfig> = {
         name: "Reflection / emotional resonance",
         topLevelQuestion: "Here's what this conversation revealed — does this feel true?",
         goal: "Reflect a specific, real pattern noticed across the conversation, and ask if it feels true to them.",
-        successCriteria: "Any real reaction to the reflection — confirming, correcting, or adding nuance. A flat one-word non-answer doesn't count.",
+        successCriteria: "A real reaction that confirms, corrects, or adds nuance — not just a flat agreement like \"yeah\" or \"I guess.\" The reaction must show the student has actually engaged with the reflection, not just acknowledged it.",
         examples: ["yeah, that's actually accurate", "partly, but it's more complicated than that", "not really — here's what's actually true"],
         isMirror: true,
       },
@@ -265,6 +265,57 @@ export function minRepliesFor(act: ConversationAct): number {
   return act.isMirror ? 1 : MIN_SATISFACTORY_REPLIES_PER_ACT;
 }
 
+// Tokens that are only filler when NOT answering a closed (yes/no) question.
+// "idk", "dunno", "lol" etc. are unconditional filler regardless of question type.
+const CLOSED_ANSWER_TOKENS =
+  /^(yeah|yep|nope|nah|ok|okay|yes|no|sure|fine|uh|uhh|right|yup|nah)\.?$/i;
+
+const UNCONDITIONAL_FILLER =
+  /^(idk|idk\.|dunno|lol|haha|hm+|hmm+|\.\.\.|meh|umm?)\.?$/i;
+
+/**
+ * Returns true if a short student message should be treated as disengagement
+ * filler (triggering a breathe turn), rather than a genuine short answer.
+ *
+ * A "yes/nah/sure" reply to a yes/no question is a real answer, not filler.
+ * The heuristic: if the preceding assistant message ends in "?" and opens
+ * with a closed-question verb (do/does/did/is/are/can/would/have) or
+ * contains " or " as a binary offer, treat single-token confirmations/
+ * refusals as genuine — not filler.
+ *
+ * Short length alone is NOT sufficient to classify something as filler — a
+ * single-word substantive answer ("chess", "art", "music") is real content,
+ * even at 3-9 characters. Only pure-whitespace or empty replies get caught by
+ * length alone.
+ */
+export function isFillerMessage(text: string, previousAssistantMessage?: string): boolean {
+  const trimmed = text.trim();
+
+  // Empty or pure-whitespace — no content at all.
+  if (trimmed.length === 0) return true;
+
+  // Always filler regardless of context — these tokens carry no information.
+  if (UNCONDITIONAL_FILLER.test(trimmed)) return true;
+
+  // Closed-answer tokens: only filler when the preceding question was open-ended.
+  if (CLOSED_ANSWER_TOKENS.test(trimmed)) {
+    return !isPrecedingClosedQuestion(previousAssistantMessage);
+  }
+
+  // A short reply that doesn't match any filler pattern is a real short answer
+  // (e.g. "chess", "art", "music"). Don't count it as filler.
+  return false;
+}
+
+function isPrecedingClosedQuestion(msg: string | undefined): boolean {
+  if (!msg) return false;
+  const trimmed = msg.trim();
+  if (!trimmed.endsWith("?")) return false;
+  // Starts with a closed-question verb, or contains " or " as a binary offer.
+  return /^(do|does|did|is|are|can|would|have|has|was|were|should|could|will)\b/i.test(trimmed) ||
+    / or /i.test(trimmed);
+}
+
 interface BuildPromptArgs {
   ageBand: AgeBand;
   state: ActState;
@@ -273,8 +324,10 @@ interface BuildPromptArgs {
   nudge?: { situation: ReplySituation };
   /** Set when the reply WAS good, but we still need more depth on this
    * territory before moving on — different in tone from a nudge: this is
-   * "great, now tell me more," not "that didn't quite work." */
-  deepen?: boolean;
+   * "great, now tell me more," not "that didn't quite work."
+   * richness guides whether to stay with the external concrete thing one
+   * more turn (rich-needs-anchoring) or ask the personal follow-up (rich-ready-to-deepen). */
+  deepen?: { richness?: "thin" | "rich-needs-anchoring" | "rich-ready-to-deepen" };
   /** Set when the student has sent multiple consecutive very short / filler
    * replies. React warmly and leave space — no question this turn. */
   breathe?: boolean;
@@ -300,6 +353,17 @@ export function buildSystemPrompt({ ageBand, state, nudge, deepen, breathe }: Bu
         SHARED_GUARDRAILS,
         voiceBlock,
         "The student just signaled they want to stop, are done for now, or seem distressed. End gracefully and immediately: do not ask another question, do not push back. Warmly acknowledge it's okay to stop, thank them for what they shared so far, and let them know they can come back anytime. No question mark.",
+      ].join("\n\n");
+    }
+
+    // Mirror nudge: the student gave a flat agreement without engaging with
+    // the reflection. One warm follow-up — "does anything about that surprise
+    // you, or feel off?" — rather than a full re-ask of the act's question.
+    if (act.isMirror) {
+      return [
+        SHARED_GUARDRAILS,
+        voiceBlock,
+        `You are at the Mirror territory — you've already shared the reflection. The student just gave a flat or minimal response ("yeah", "I guess", etc.) without engaging with what you said. Give them one gentle, warm follow-up: acknowledge their short answer without pressure, then ask ONE specific question about the reflection itself — does anything about it surprise them, feel off, or feel especially true? Keep it light and conversational. This is not an interrogation — you're just leaving a little more room for them to react if they want to.`,
       ].join("\n\n");
     }
 
@@ -350,12 +414,24 @@ export function buildSystemPrompt({ ageBand, state, nudge, deepen, breathe }: Bu
   }
 
   if (deepen) {
+    const richness = deepen.richness ?? "thin";
+
+    // The topLevelQuestion is background context only here — do NOT show it as
+    // a directive, because that pulls the model toward bridging back to the
+    // abstract goal instead of staying with the concrete thing the student named.
+    const deepenInstruction =
+      richness === "rich-needs-anchoring"
+        ? `Their answer was specific and real — they named a concrete thing (a show, character, game, activity, or person) and engaged with it genuinely. Do NOT pivot to the act's underlying question yet, and do NOT ask what this says about them personally. Stay entirely with the concrete thing they named: ask one more question about THAT specific thing — what draws them to it, what they find cool about it, what they know about it, or what it's like to engage with it. The personal insight will emerge naturally; don't force it. HARD RULE: your question must be about the SPECIFIC THING they named, not about their free time in general, not about who they are, not a bridge back to the act's topic.`
+        : richness === "rich-ready-to-deepen"
+        ? `Their answer has already started to connect the external thing to what it means about them personally. You can now ask the more personal follow-up directly — gently, not clinically. React to what they said, then ask one question that goes one level deeper into what this means for them. HARD RULE: no pick-one list, ask something they have to answer in their own words.`
+        : `Their answer was real and on-topic but minimal — react to what they specifically said, then ask ONE natural follow-up that invites a bit more texture. CRITICAL PACING RULE: stay with the EXACT thing they named — if they said a specific show, character, or activity, ask something about THAT thing first before asking what it means about them personally. Don't leap from "what you like" to "what does that say about you" in one turn. HARD RULE: no pick-one list.`;
+
     return [
       SHARED_GUARDRAILS,
       REACTION_PRINCIPLES,
       voiceBlock,
-      `You are still on the territory "${act.name}" — the underlying question: "${act.topLevelQuestion}". What we actually need: ${act.successCriteria}`,
-      "Their last answer was genuine and on-topic but too brief to build a real profile signal from. Don't move to the next territory. React to what they specifically said, then ask ONE natural follow-up. CRITICAL PACING RULE: stay with the EXACT thing they named — if they said a specific show, character, or activity, ask something about THAT thing (what draws them to it, what they find cool about it) before asking what it means about them personally. Don't leap from \"what you like\" to \"what does that say about you\" in one turn — earn the abstraction by exploring the concrete thing first. HARD RULE: no pick-one list (no \"is it A, B, or C\") — ask something they have to answer in their own words.",
+      `You are still on the territory "${act.name}" (background: the underlying goal is "${act.topLevelQuestion}" — but do NOT ask that directly or pivot to it this turn). What we eventually need: ${act.successCriteria}`,
+      deepenInstruction,
     ].join("\n\n");
   }
 
