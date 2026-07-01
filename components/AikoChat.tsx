@@ -370,25 +370,25 @@ export const AikoChat = () => {
             transition={{ delay: 0.3 }}
             className="space-y-4"
           >
-            <p className="text-slate-500 text-sm uppercase tracking-wider">Choose your age</p>
+            <p className="text-slate-500 text-sm uppercase tracking-wider">Choose your class</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <AgePickerCard
-                ageRange="5–8"
-                isSaved={savedAge === "5-8"}
+                ageRange="Class 3–5"
+                isSaved={savedAge === "3-5"}
                 disabled={loadingProfile}
-                onClick={() => startConversation("5-8")}
+                onClick={() => startConversation("3-5")}
               />
               <AgePickerCard
-                ageRange="9–12"
+                ageRange="Class 6–8"
+                isSaved={savedAge === "6-8"}
+                disabled={loadingProfile}
+                onClick={() => startConversation("6-8")}
+              />
+              <AgePickerCard
+                ageRange="Class 9–12"
                 isSaved={savedAge === "9-12"}
                 disabled={loadingProfile}
                 onClick={() => startConversation("9-12")}
-              />
-              <AgePickerCard
-                ageRange="13–18"
-                isSaved={savedAge === "13-18"}
-                disabled={loadingProfile}
-                onClick={() => startConversation("13-18")}
               />
             </div>
           </motion.div>
