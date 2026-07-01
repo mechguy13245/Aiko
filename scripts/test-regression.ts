@@ -94,7 +94,7 @@ function testPromptStructure(): number {
 
   // Test 5: closing turn has no question mark in instruction
   sep("Test 5 — Closing turn system prompt bans question marks");
-  const closingPrompt = buildSystemPrompt({ ageBand: "13-18", state: makeState(), isClosing: true });
+  const closingPrompt = buildSystemPrompt({ ageBand: "9-12", state: makeState(), isClosing: true });
   const closingBansQ = closingPrompt.toLowerCase().includes("no question mark");
   console.log(`Closing prompt bans question marks: ${closingBansQ}`);
   console.log(closingBansQ ? "PASS" : "FAIL");
@@ -148,7 +148,7 @@ function testPromptStructure(): number {
   // Test 10: opening messages exist for all age bands and contain no question in
   // the first sentence (they invite, they don't interrogate).
   sep("Test 10 — Opening messages exist and are age-appropriate");
-  const ageBands = ["5-8", "9-12", "13-18"] as const;
+  const ageBands = ["3-5", "6-8", "9-12"] as const;
   let t10 = true;
   for (const band of ageBands) {
     const msg = OPENING_MESSAGES[band];
@@ -164,7 +164,7 @@ function testPromptStructure(): number {
 
   // Test 11: normal system prompt contains boredom-acknowledgment guidance
   sep("Test 11 — System prompt instructs model to acknowledge boredom directly");
-  const boredomPrompt = buildSystemPrompt({ ageBand: "13-18", state: makeState({ turnCount: 3 }) });
+  const boredomPrompt = buildSystemPrompt({ ageBand: "9-12", state: makeState({ turnCount: 3 }) });
   const hasBoredomRule = boredomPrompt.includes("boring") && boredomPrompt.includes("genuine choice");
   console.log(`Contains boredom acknowledgment rule: ${hasBoredomRule}`);
   console.log(hasBoredomRule ? "PASS" : "FAIL");
@@ -210,7 +210,7 @@ async function testClassifier(): Promise<number> {
     { role: "user" as const, content: "I like Light" },
     { role: "assistant" as const, content: "What is it about Light that you find compelling?" },
   ];
-  const deathNote = await classifyTurn("13-18", animeContext, "Aligned with his mission and totally dedicated towards it feels cool");
+  const deathNote = await classifyTurn("9-12", animeContext, "Aligned with his mission and totally dedicated towards it feels cool");
   console.log("classifyTurn result:", JSON.stringify(deathNote, null, 2));
   const t2 = deathNote.dimensions.interestDomain !== "none" && !deathNote.wantsToStop;
   console.log(`interestDomain: ${deathNote.dimensions.interestDomain} (expected: thin or rich) — ${t2 ? "PASS" : "FAIL"}`);
@@ -231,7 +231,7 @@ async function testClassifier(): Promise<number> {
     { role: "user" as const, content: "yes" },
     { role: "assistant" as const, content: "What's it like — tucked away or right in the middle of everything?" },
   ];
-  const bored = await classifyTurn("13-18", beachContext, "its borign chat");
+  const bored = await classifyTurn("9-12", beachContext, "its borign chat");
   console.log("classifyTurn result:", JSON.stringify(bored, null, 2));
   const t3 = bored.wantsToStop === true;
   console.log(`wantsToStop on boredom: ${bored.wantsToStop} — expected: true — ${t3 ? "PASS" : "FAIL"}`);
