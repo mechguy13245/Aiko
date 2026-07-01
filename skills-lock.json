@@ -1,11 +1,23 @@
 {
   "version": 1,
   "skills": {
+    "chat": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "chat/SKILL.md",
+      "computedHash": "13606ca62ff310b7765de0dabe4f32cbb2275ed2ac15224a8292116ade074908"
+    },
     "langfuse": {
       "source": "langfuse/skills",
       "sourceType": "github",
       "skillPath": "skills/langfuse/SKILL.md",
       "computedHash": "2a83575ed51ce9fd81b661fc0cc2b150e8b8fbbd64c43fda2c48a0314bc93c52"
+    },
+    "speech-to-text": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "speech-to-text/SKILL.md",
+      "computedHash": "62d68da4694995fbcfb4d20f5e94ec3043e51c0f92b517aad3531ab0743b7578"
     },
     "supabase": {
       "source": "supabase/agent-skills",
@@ -18,6 +30,24 @@
       "sourceType": "github",
       "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
       "computedHash": "3639bed1f40b3fbadae79fee631c42c89b2d1f5c30b05d5aa3cca06422a6bbbc"
+    },
+    "text-to-speech": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "text-to-speech/SKILL.md",
+      "computedHash": "578a9291846aaeb4bb49fe83150a594c72c005f4436e7ce3f3608ed42ae42b5c"
+    },
+    "translate": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "translate/SKILL.md",
+      "computedHash": "b8ad60dfe56da39b2283573ae583b224241327f1540ae968ed2be5c5e66c814b"
+    },
+    "voice-agents": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "voice-agents/SKILL.md",
+      "computedHash": "7ef90244756b073119c9c3b1e9be7478a3fe649ba8e030ccbd8bff75f39a69ae"
     }
   }
 }

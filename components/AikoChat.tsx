@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowUp, Sparkles, Mic } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { AgeBand, isAgeBand } from "@/lib/aiko/conversation";
+import { ComicCreator } from "@/components/ComicCreator";
 
 const cn = (...classes: (string | undefined | null | false)[]) => classes.filter(Boolean).join(" ");
 
@@ -92,7 +93,7 @@ const AgePickerCard: React.FC<{
 );
 
 export const AikoChat = () => {
-  const [screen, setScreen] = useState<"landing" | "chat">("landing");
+  const [screen, setScreen] = useState<"landing" | "chat" | "comic">("landing");
   const [selectedAge, setSelectedAge] = useState<AgeBand | "">("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -119,10 +120,23 @@ export const AikoChat = () => {
 
     async function loadSession() {
       try {
+        // Check saved class range first — Class 1 users route to ComicCreator
+        const crRes = await fetch("/api/class-range");
+        if (crRes.ok) {
+          const crData = await crRes.json();
+          if (crData.classRange === "class-1") {
+            setSavedAge("class-1");
+            setScreen("comic");
+            setLoadingProfile(false);
+            return;
+          }
+        }
+
         const res = await fetch("/api/chat-session");
         if (res.ok) {
           const data = await res.json();
           const existing = data.session;
+
           if (existing && isAgeBand(existing.ageBand)) {
             setSavedAge(existing.ageBand);
             setSelectedAge(existing.ageBand);
@@ -225,6 +239,20 @@ export const AikoChat = () => {
       sendToAiko(selectedAge, []);
     }
   }, [screen, selectedAge, messages.length]);
+
+  const startComic = async () => {
+    setSavedAge("class-1");
+    setScreen("comic");
+    try {
+      await fetch("/api/class-range", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ classRange: "class-1" }),
+      });
+    } catch (err) {
+      console.error("Failed to save class range:", err);
+    }
+  };
 
   const startConversation = async (age: string) => {
     if (!isAgeBand(age)) return;
@@ -371,7 +399,13 @@ export const AikoChat = () => {
             className="space-y-4"
           >
             <p className="text-slate-500 text-sm uppercase tracking-wider">Choose your class</p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <AgePickerCard
+                ageRange="Class 1"
+                isSaved={savedAge === "class-1"}
+                disabled={loadingProfile}
+                onClick={startComic}
+              />
               <AgePickerCard
                 ageRange="Class 3–5"
                 isSaved={savedAge === "3-5"}
@@ -394,6 +428,23 @@ export const AikoChat = () => {
           </motion.div>
         </div>
       </div>
+    );
+  }
+
+  if (screen === "comic") {
+    return (
+      <ComicCreator
+        onBack={() => {
+          setScreen("landing");
+          setSavedAge(null);
+          // Clear class-1 from profile so they can pick again next time
+          fetch("/api/class-range", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ classRange: "none" }),
+          }).catch(() => {});
+        }}
+      />
     );
   }
 
