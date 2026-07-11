@@ -88,7 +88,8 @@ export class ComicOrchestrator {
     this.memoryStore.setPendingNudgeHint(judgeResult.nudgeHint);
 
     const panelTurns = this.memoryStore.getPanelTurns();
-    const panelReady = panelTurns >= 3 && judgeResult.isReady;
+    // Hard cap: always generate after 3 turns regardless of judge readiness
+    const panelReady = panelTurns >= 3;
 
     if (!panelReady) {
       return {
@@ -99,8 +100,12 @@ export class ComicOrchestrator {
       };
     }
 
-    // Scene is ready — generate panel
-    const storyData = await this.storyBuilder.extractAndBuild(userText);
+    // Scene is ready — generate panel using the full panel conversation for richer context
+    const panelTranscript = this.memoryStore.getPanelMessages()
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .join(" ");
+    const storyData = await this.storyBuilder.extractAndBuild(panelTranscript);
     const rawImageUrl = await this.imageGenerator.generate(storyData.imagePrompt);
     const panelIndex = this.memoryStore.getIterationCount();
     let imageUrl = rawImageUrl;

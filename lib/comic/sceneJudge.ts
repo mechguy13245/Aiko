@@ -9,6 +9,7 @@ const SceneJudgeSchema = z.object({
   character: RichnessSchema,
   setting: RichnessSchema,
   action: RichnessSchema,
+  mood: RichnessSchema,
   isReady: z.boolean(),
   nudgeHint: z.string(),
 });
@@ -19,6 +20,7 @@ const FAIL_OPEN: SceneJudgeResult = {
   character: "none",
   setting: "none",
   action: "none",
+  mood: "none",
   isReady: false,
   nudgeHint: "",
 };
