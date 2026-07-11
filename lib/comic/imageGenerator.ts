@@ -7,11 +7,10 @@ export class ImageGenerator {
     try {
       const fullPrompt = IMAGE_PROMPT.trim() + "\n\n" + prompt;
 
-      const isDev = process.env.NODE_ENV === "development";
       const result = await generateImage({
-        model: gateway.image(isDev ? "openai/dall-e-2" : "google/imagen-4.0-generate-001"),
+        model: gateway.image("openai/gpt-image-1-mini"),
         prompt: fullPrompt,
-        ...(isDev ? { size: "512x512" } : { aspectRatio: "4:3" }),
+        size: "1024x1024",
       });
 
       const image = result.images[0];
