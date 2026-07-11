@@ -365,9 +365,53 @@ export const ComicCreator = () => {
               return;
             }
 
-            if (data.error === "Session not found or expired") {
-              setErrorMessage("Session expired. Please start a new story.");
-              setSessionId(null);
+            if (res.status === 404 && data.error === "Session not found or expired") {
+              // Session was lost (hot-reload / serverless cold-start) — silently recover
+              try {
+                const newRes = await fetch("/api/comic/session/new", { method: "POST" });
+                const newData = await newRes.json();
+                if (!newRes.ok) throw new Error(newData.error);
+                const recoveredId = newData.sessionId;
+                setSessionId(recoveredId);
+
+                // Retry with the fresh session
+                const retryRes = await fetch("/api/comic/chat", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ sessionId: recoveredId, audioBase64: base64Audio }),
+                });
+                const retryData = await retryRes.json();
+                if (retryData.response) {
+                  setMessages((prev) => [
+                    ...prev,
+                    { id: `bot-${Date.now()}`, text: retryData.response, isUser: false },
+                  ]);
+                }
+                if (retryData.audioBase64 && !isMuted) {
+                  const mimeType = retryData.audioMimeType || "audio/wav";
+                  const audio = new Audio(`data:${mimeType};base64,${retryData.audioBase64}`);
+                  setIsAikoSpeaking(true);
+                  audio.onended = () => setIsAikoSpeaking(false);
+                  audio.onerror = () => setIsAikoSpeaking(false);
+                  audio.play();
+                }
+                if (retryData.imageUrl) {
+                  const newPanel: ComicPanel = {
+                    id: `panel-${Date.now()}`,
+                    imageUrl: retryData.imageUrl,
+                    caption: retryData.theme || retryData.response || "",
+                  };
+                  setComicPanels((prev) => {
+                    const updated = [...prev, newPanel];
+                    if (updated.length === 1) { setShowSketchbook(true); setCurrentPanelIndex(0); }
+                    else setCurrentPanelIndex(updated.length - 1);
+                    return updated;
+                  });
+                }
+                if (retryData.isDone) setIsDone(true);
+              } catch {
+                setErrorMessage("Something went wrong. Please try again.");
+              }
               resolve();
               return;
             }
