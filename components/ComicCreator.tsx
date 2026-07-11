@@ -11,7 +11,6 @@ import {
   ChevronRight,
   RotateCcw,
   Download,
-  ArrowLeft,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 
@@ -202,7 +201,7 @@ const MicButton = ({
   );
 };
 
-export const ComicCreator = ({ onBack }: { onBack: () => void }) => {
+export const ComicCreator = () => {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -429,13 +428,7 @@ export const ComicCreator = ({ onBack }: { onBack: () => void }) => {
       `}</style>
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-amber-800/60 hover:text-amber-900 text-sm font-handwriting transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back
-        </button>
+      <div className="flex items-center justify-end px-4 pt-4">
         <button
           onClick={() => setIsMuted((m) => !m)}
           className="text-amber-800/50 hover:text-amber-900 transition-colors"

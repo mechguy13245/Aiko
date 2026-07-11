@@ -442,20 +442,7 @@ export const AikoChat = () => {
   }
 
   if (screen === "comic") {
-    return (
-      <ComicCreator
-        onBack={() => {
-          if (typeof window !== "undefined") localStorage.removeItem("aiko_class_range");
-          setScreen("landing");
-          setSavedAge(null);
-          fetch("/api/class-range", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ classRange: "none" }),
-          }).catch(() => {});
-        }}
-      />
-    );
+    return <ComicCreator />;
   }
 
   return (
