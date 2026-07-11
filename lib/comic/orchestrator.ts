@@ -127,6 +127,7 @@ export class ComicOrchestrator {
       audioBase64: conversationResult.audioBase64,
       audioMimeType: conversationResult.audioMimeType,
       imageUrl,
+      narration: storyData.narration,
       theme: storyData.theme,
       isDone: false,
     };

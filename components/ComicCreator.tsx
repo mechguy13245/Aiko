@@ -441,7 +441,7 @@ export const ComicCreator = () => {
                   const newPanel: ComicPanel = {
                     id: `panel-${Date.now()}`,
                     imageUrl: retryData.imageUrl,
-                    caption: retryData.theme || retryData.response || "",
+                    caption: retryData.narration || retryData.theme || "",
                   };
                   setComicPanels((prev) => {
                     const updated = [...prev, newPanel];
@@ -482,7 +482,7 @@ export const ComicCreator = () => {
               const newPanel: ComicPanel = {
                 id: `panel-${Date.now()}`,
                 imageUrl: data.imageUrl,
-                caption: data.theme || data.response || "",
+                caption: data.narration || data.theme || "",
               };
               setComicPanels((prev) => {
                 const updated = [...prev, newPanel];
@@ -561,8 +561,8 @@ export const ComicCreator = () => {
     const MARGIN = 10;
     const GAP = 6;
     const panelW = (W - MARGIN * 2 - GAP) / 2;
-    const imgH = H - MARGIN * 2 - 28; // leave room for caption
-    const captionH = 24;
+    const captionH = 40;
+    const imgH = H - MARGIN * 2 - captionH;
 
     for (let i = 0; i < comicPanels.length; i += PANELS_PER_PAGE) {
       doc.addPage();
@@ -622,8 +622,8 @@ export const ComicCreator = () => {
         doc.setTextColor(92, 40, 6);
         doc.setFontSize(9);
         doc.setFont("helvetica", "normal");
-        const words = doc.splitTextToSize(panel.caption || "", panelW - 6);
-        doc.text(words.slice(0, 3), x + panelW / 2, y + imgH + 8, { align: "center" });
+        const words = doc.splitTextToSize(panel.caption || "", panelW - 8);
+        doc.text(words, x + panelW / 2, y + imgH + 7, { align: "center" });
       });
     }
 
@@ -650,8 +650,8 @@ export const ComicCreator = () => {
 
     const MARGIN = 10; const GAP = 6;
     const panelW = (W - MARGIN * 2 - GAP) / 2;
-    const imgH = H - MARGIN * 2 - 28;
-    const captionH = 24;
+    const captionH = 40;
+    const imgH = H - MARGIN * 2 - captionH;
 
     for (let i = 0; i < story.panels.length; i += 2) {
       doc.addPage();
@@ -679,8 +679,8 @@ export const ComicCreator = () => {
         doc.setDrawColor(120, 53, 15); doc.setLineWidth(1);
         doc.rect(x, y + imgH, panelW, captionH);
         doc.setTextColor(92, 40, 6); doc.setFontSize(9); doc.setFont("helvetica", "normal");
-        const words = doc.splitTextToSize(panel.narration || "", panelW - 6);
-        doc.text(words.slice(0, 3), x + panelW / 2, y + imgH + 8, { align: "center" });
+        const words = doc.splitTextToSize(panel.narration || "", panelW - 8);
+        doc.text(words, x + panelW / 2, y + imgH + 7, { align: "center" });
       });
     }
 
