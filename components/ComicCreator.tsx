@@ -630,6 +630,63 @@ export const ComicCreator = () => {
     doc.save("my-story-comic.pdf");
   };
 
+  const handleExportStoryPDF = (story: PastStory) => {
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const W = 297; const H = 210;
+
+    // Cover
+    doc.setFillColor(255, 237, 213);
+    doc.rect(0, 0, W, H, "F");
+    doc.setDrawColor(120, 53, 15); doc.setLineWidth(4);
+    doc.rect(6, 6, W - 12, H - 12);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(48);
+    doc.setTextColor(120, 53, 15);
+    doc.text("My Story Comic!", W / 2, H / 2 - 10, { align: "center" });
+    doc.setFontSize(18); doc.setFont("helvetica", "normal");
+    doc.setTextColor(180, 83, 9);
+    doc.text(`${story.panels.length} panels of adventure`, W / 2, H / 2 + 14, { align: "center" });
+    doc.setFontSize(11); doc.setTextColor(200, 150, 80);
+    doc.text("Made with Aiko Story Time ✨", W / 2, H - 16, { align: "center" });
+
+    const MARGIN = 10; const GAP = 6;
+    const panelW = (W - MARGIN * 2 - GAP) / 2;
+    const imgH = H - MARGIN * 2 - 28;
+    const captionH = 24;
+
+    for (let i = 0; i < story.panels.length; i += 2) {
+      doc.addPage();
+      doc.setFillColor(255, 251, 235); doc.rect(0, 0, W, H, "F");
+      doc.setTextColor(240, 220, 190); doc.setFontSize(60); doc.setFont("helvetica", "bold");
+      doc.text("StoryTime", W / 2, H / 2 + 10, { align: "center", angle: 30 });
+
+      story.panels.slice(i, i + 2).forEach((panel, col) => {
+        const x = MARGIN + col * (panelW + GAP);
+        const y = MARGIN;
+        doc.setFillColor(200, 170, 130);
+        doc.roundedRect(x + 2, y + 2, panelW, imgH + captionH, 4, 4, "F");
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(x, y, panelW, imgH + captionH, 4, 4, "F");
+        doc.setFillColor(251, 146, 60); doc.circle(x + 8, y + 8, 6, "F");
+        doc.setTextColor(255, 255, 255); doc.setFontSize(8); doc.setFont("helvetica", "bold");
+        doc.text(String(i + col + 1), x + 8, y + 10.5, { align: "center" });
+        if (panel.imageUrl && !panel.imageUrl.startsWith("https://placehold")) {
+          try { doc.addImage(panel.imageUrl, "PNG", x + 2, y + 2, panelW - 4, imgH - 4); }
+          catch { try { doc.addImage(panel.imageUrl, "JPEG", x + 2, y + 2, panelW - 4, imgH - 4); } catch { /* skip */ } }
+        }
+        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1.5);
+        doc.roundedRect(x, y, panelW, imgH, 4, 4);
+        doc.setFillColor(254, 243, 199); doc.rect(x, y + imgH, panelW, captionH, "F");
+        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1);
+        doc.rect(x, y + imgH, panelW, captionH);
+        doc.setTextColor(92, 40, 6); doc.setFontSize(9); doc.setFont("helvetica", "normal");
+        const words = doc.splitTextToSize(panel.narration || "", panelW - 6);
+        doc.text(words.slice(0, 3), x + panelW / 2, y + imgH + 8, { align: "center" });
+      });
+    }
+
+    doc.save("my-story-comic.pdf");
+  };
+
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
       <style jsx global>{`
@@ -953,9 +1010,17 @@ export const ComicCreator = () => {
                 >
                   <ChevronLeft className="w-5 h-5" /> All Stories
                 </button>
-                <span className="font-handwriting text-amber-700">
-                  {viewingPanelIndex + 1} / {viewingStory.panels.length}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-handwriting text-amber-700">
+                    {viewingPanelIndex + 1} / {viewingStory.panels.length}
+                  </span>
+                  <button
+                    onClick={() => handleExportStoryPDF(viewingStory)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-full font-handwriting transition-colors shadow-sm"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Export PDF
+                  </button>
+                </div>
               </div>
 
               <AnimatePresence mode="wait">
