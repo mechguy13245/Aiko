@@ -529,33 +529,103 @@ export const ComicCreator = () => {
   useEffect(() => () => stopRecording(), []);
 
   const handleExportPDF = () => {
-    const doc = new jsPDF();
+    // A4 landscape for a comic-book feel: 297 x 210 mm
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const W = 297; const H = 210;
 
-    comicPanels.forEach((panel, index) => {
-      if (index > 0) doc.addPage();
+    // ── Cover page ──
+    doc.setFillColor(255, 237, 213); // amber-100
+    doc.rect(0, 0, W, H, "F");
 
-      if (index === 0) {
-        doc.setFontSize(24);
-        doc.text("My Story Comic", 105, 20, { align: "center" });
-      }
+    // Thick border
+    doc.setDrawColor(120, 53, 15); doc.setLineWidth(4);
+    doc.rect(6, 6, W - 12, H - 12);
 
-      if (panel.imageUrl && !panel.imageUrl.startsWith("https://placehold")) {
-        try {
-          doc.addImage(panel.imageUrl, "JPEG", 15, index === 0 ? 40 : 20, 180, 135);
-        } catch {
-          // skip image if it fails to embed
+    // Title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(48);
+    doc.setTextColor(120, 53, 15);
+    doc.text("My Story Comic!", W / 2, H / 2 - 10, { align: "center" });
+
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(180, 83, 9);
+    doc.text(`${comicPanels.length} panels of adventure`, W / 2, H / 2 + 14, { align: "center" });
+
+    doc.setFontSize(11);
+    doc.setTextColor(200, 150, 80);
+    doc.text("Made with Aiko Story Time ✨", W / 2, H - 16, { align: "center" });
+
+    // ── Panel pages: 2 panels per page ──
+    const PANELS_PER_PAGE = 2;
+    const MARGIN = 10;
+    const GAP = 6;
+    const panelW = (W - MARGIN * 2 - GAP) / 2;
+    const imgH = H - MARGIN * 2 - 28; // leave room for caption
+    const captionH = 24;
+
+    for (let i = 0; i < comicPanels.length; i += PANELS_PER_PAGE) {
+      doc.addPage();
+
+      // Page background
+      doc.setFillColor(255, 251, 235);
+      doc.rect(0, 0, W, H, "F");
+
+      // Watermark
+      doc.setTextColor(240, 220, 190);
+      doc.setFontSize(60);
+      doc.setFont("helvetica", "bold");
+      doc.text("StoryTime", W / 2, H / 2 + 10, { align: "center", angle: 30 });
+
+      const pagePanels = comicPanels.slice(i, i + PANELS_PER_PAGE);
+
+      pagePanels.forEach((panel, col) => {
+        const x = MARGIN + col * (panelW + GAP);
+        const y = MARGIN;
+
+        // Panel shadow
+        doc.setFillColor(200, 170, 130);
+        doc.roundedRect(x + 2, y + 2, panelW, imgH + captionH, 4, 4, "F");
+
+        // Panel background
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(x, y, panelW, imgH + captionH, 4, 4, "F");
+
+        // Panel number badge
+        doc.setFillColor(251, 146, 60); // orange-400
+        doc.circle(x + 8, y + 8, 6, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(String(i + col + 1), x + 8, y + 10.5, { align: "center" });
+
+        // Image
+        if (panel.imageUrl && !panel.imageUrl.startsWith("https://placehold")) {
+          try {
+            doc.addImage(panel.imageUrl, "PNG", x + 2, y + 2, panelW - 4, imgH - 4);
+          } catch {
+            try { doc.addImage(panel.imageUrl, "JPEG", x + 2, y + 2, panelW - 4, imgH - 4); } catch { /* skip */ }
+          }
         }
-      }
 
-      doc.setFontSize(14);
-      const splitText = doc.splitTextToSize(panel.caption || "", 170);
-      doc.text(splitText, 105, index === 0 ? 190 : 170, { align: "center" });
+        // Image border
+        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1.5);
+        doc.roundedRect(x, y, panelW, imgH, 4, 4);
 
-      doc.setTextColor(200, 200, 200);
-      doc.setFontSize(40);
-      doc.text("StoryTime", 105, 280, { align: "center", angle: 45 });
-      doc.setTextColor(0, 0, 0);
-    });
+        // Caption strip
+        doc.setFillColor(254, 243, 199); // amber-50
+        doc.rect(x, y + imgH, panelW, captionH, "F");
+        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1);
+        doc.rect(x, y + imgH, panelW, captionH);
+
+        // Caption text
+        doc.setTextColor(92, 40, 6);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        const words = doc.splitTextToSize(panel.caption || "", panelW - 6);
+        doc.text(words.slice(0, 3), x + panelW / 2, y + imgH + 8, { align: "center" });
+      });
+    }
 
     doc.save("my-story-comic.pdf");
   };
