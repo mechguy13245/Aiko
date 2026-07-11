@@ -2,10 +2,13 @@ import { ConversationAgent } from "./conversationAgent";
 import { StoryBuilder } from "./storyBuilder";
 import { ImageGenerator } from "./imageGenerator";
 import { MemoryStore } from "./memoryStore";
+import { uploadComicImage } from "./storageUploader";
+import { upsertComicSession, markComicSessionComplete } from "./dbStore";
 
 export interface OrchestratorConfig {
   maxIterations?: number;
   sessionId: string;
+  userId: string;
 }
 
 export class ComicOrchestrator {
@@ -14,9 +17,13 @@ export class ComicOrchestrator {
   private imageGenerator: ImageGenerator;
   private memoryStore: MemoryStore;
   private maxIterations: number;
+  private sessionId: string;
+  private userId: string;
 
   constructor(config: OrchestratorConfig) {
     this.maxIterations = config.maxIterations ?? 5;
+    this.sessionId = config.sessionId;
+    this.userId = config.userId;
     this.memoryStore = new MemoryStore(config.sessionId);
     this.conversationAgent = new ConversationAgent(this.memoryStore);
     this.storyBuilder = new StoryBuilder(this.memoryStore);
@@ -35,6 +42,7 @@ export class ComicOrchestrator {
     const currentIteration = this.memoryStore.getIterationCount();
 
     if (currentIteration >= this.maxIterations) {
+      await markComicSessionComplete(this.sessionId).catch(console.error);
       return { response: "🎉 Your amazing comic is ready!", isDone: true };
     }
 
@@ -68,15 +76,24 @@ export class ComicOrchestrator {
       this.storyBuilder.extractAndBuild(userText),
     ]);
 
-    const imageUrl = await this.imageGenerator.generate(storyData.imagePrompt);
+    // Generate image then upload to Supabase Storage
+    const rawImageUrl = await this.imageGenerator.generate(storyData.imagePrompt);
+    const panelIndex = this.memoryStore.getIterationCount();
+    let imageUrl = rawImageUrl;
 
-    this.memoryStore.addPanel({
-      narration: storyData.narration,
-      imageUrl,
-      userInput: userText,
-    });
+    if (!rawImageUrl.startsWith("https://placehold")) {
+      try {
+        imageUrl = await uploadComicImage(rawImageUrl, this.userId, this.sessionId, panelIndex);
+      } catch (err) {
+        console.error("Failed to upload image to storage, using data URL:", err);
+      }
+    }
 
+    this.memoryStore.addPanel({ narration: storyData.narration, imageUrl, userInput: userText });
     this.memoryStore.incrementIteration();
+
+    // Persist to DB after every panel
+    upsertComicSession(this.sessionId, this.userId, this.memoryStore.getAllPanels()).catch(console.error);
 
     return {
       response: conversationResult.text,

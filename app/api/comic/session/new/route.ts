@@ -18,7 +18,7 @@ export async function POST() {
   }
 
   const sessionId = generateId();
-  const orchestrator = new ComicOrchestrator({ sessionId });
+  const orchestrator = new ComicOrchestrator({ sessionId, userId: user.id });
   comicSessions.set(sessionId, orchestrator);
 
   return NextResponse.json({

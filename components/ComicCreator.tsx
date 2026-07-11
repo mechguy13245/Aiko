@@ -11,6 +11,8 @@ import {
   ChevronRight,
   RotateCcw,
   Download,
+  BookOpen,
+  X,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 
@@ -27,6 +29,19 @@ interface ComicPanel {
   id: string;
   imageUrl: string;
   caption: string;
+}
+
+// Shape as stored in DB (from memoryStore)
+interface StoredPanel {
+  narration: string;
+  imageUrl: string;
+  userInput: string;
+}
+
+interface PastStory {
+  id: string;
+  panels: StoredPanel[];
+  createdAt: string;
 }
 
 // Sketchy animated border
@@ -215,8 +230,30 @@ export const ComicCreator = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDone, setIsDone] = useState(false);
 
+  const [showPastStories, setShowPastStories] = useState(false);
+  const [pastStories, setPastStories] = useState<PastStory[]>([]);
+  const [viewingStory, setViewingStory] = useState<PastStory | null>(null);
+  const [loadingStories, setLoadingStories] = useState(false);
+  const [viewingPanelIndex, setViewingPanelIndex] = useState(0);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  const handleViewPastStories = async () => {
+    setLoadingStories(true);
+    setShowPastStories(true);
+    try {
+      const res = await fetch("/api/comic/stories");
+      if (res.ok) {
+        const data = await res.json();
+        setPastStories(data.stories ?? []);
+      }
+    } catch (err) {
+      console.error("Failed to load past stories:", err);
+    } finally {
+      setLoadingStories(false);
+    }
+  };
 
   // Auto-advance carousel
   useEffect(() => {
@@ -501,14 +538,23 @@ export const ComicCreator = () => {
                     </AnimatePresence>
 
                     {!sessionId ? (
-                      <button
-                        onClick={handleStartChat}
-                        disabled={isProcessing}
-                        className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-full px-8 font-handwriting text-xl h-16 shadow-lg flex items-center gap-2 transition-colors"
-                      >
-                        <Mic className="w-6 h-6" />
-                        {isProcessing ? "Starting..." : "Start Chat"}
-                      </button>
+                      <div className="flex flex-col items-center gap-3 w-full">
+                        <button
+                          onClick={handleStartChat}
+                          disabled={isProcessing}
+                          className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-full px-8 font-handwriting text-xl h-16 shadow-lg flex items-center gap-2 transition-colors"
+                        >
+                          <Mic className="w-6 h-6" />
+                          {isProcessing ? "Starting..." : "Start Chat"}
+                        </button>
+                        <button
+                          onClick={handleViewPastStories}
+                          className="flex items-center gap-2 text-amber-700 hover:text-amber-900 font-handwriting text-lg transition-colors"
+                        >
+                          <BookOpen className="w-4 h-4" />
+                          My Past Stories
+                        </button>
+                      </div>
                     ) : (
                       <MicButton
                         isRecording={isRecording}
@@ -654,6 +700,157 @@ export const ComicCreator = () => {
               </motion.div>
             </div>
           </motion.section>
+        )}
+      </AnimatePresence>
+
+      {/* ── PAST STORIES OVERLAY ── */}
+      <AnimatePresence>
+        {showPastStories && !viewingStory && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-amber-50/95 backdrop-blur-sm overflow-y-auto"
+          >
+            <div className="max-w-md mx-auto px-4 py-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-4xl font-bold text-amber-900 font-handwriting">My Stories</h2>
+                <button onClick={() => setShowPastStories(false)} className="text-amber-700 hover:text-amber-900">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {loadingStories ? (
+                <div className="flex items-center justify-center py-20">
+                  <motion.div
+                    className="w-8 h-8 border-4 border-amber-400 border-t-transparent rounded-full"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  />
+                </div>
+              ) : pastStories.length === 0 ? (
+                <div className="text-center py-20">
+                  <p className="text-2xl font-handwriting text-amber-700">No stories yet!</p>
+                  <p className="text-lg font-handwriting text-amber-500 mt-2">Create your first comic adventure.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  {pastStories.map((story) => {
+                    const firstPanel = story.panels[0];
+                    const date = new Date(story.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+                    return (
+                      <motion.button
+                        key={story.id}
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => { setViewingStory(story); setViewingPanelIndex(0); }}
+                        className="bg-white rounded-2xl border-2 border-amber-200 shadow-md overflow-hidden text-left"
+                      >
+                        <div className="aspect-[4/3] bg-amber-100 flex items-center justify-center overflow-hidden">
+                          {firstPanel?.imageUrl ? (
+                            <img src={firstPanel.imageUrl} alt="Story thumbnail" className="w-full h-full object-cover" />
+                          ) : (
+                            <Sparkles className="w-8 h-8 text-amber-300" />
+                          )}
+                        </div>
+                        <div className="p-2">
+                          <p className="font-handwriting text-amber-900 text-sm font-bold">{story.panels.length} panels</p>
+                          <p className="font-handwriting text-amber-500 text-xs">{date}</p>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── STORY DETAIL OVERLAY ── */}
+      <AnimatePresence>
+        {viewingStory && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-amber-50/95 backdrop-blur-sm overflow-y-auto"
+          >
+            <div className="max-w-md mx-auto px-4 py-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setViewingStory(null)}
+                  className="flex items-center gap-1.5 text-amber-700 hover:text-amber-900 font-handwriting text-lg"
+                >
+                  <ChevronLeft className="w-5 h-5" /> All Stories
+                </button>
+                <span className="font-handwriting text-amber-700">
+                  {viewingPanelIndex + 1} / {viewingStory.panels.length}
+                </span>
+              </div>
+
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={viewingPanelIndex}
+                  initial={{ opacity: 0, x: 60 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -60 }}
+                  transition={{ duration: 0.3 }}
+                  className="bg-white rounded-3xl border-4 border-amber-900/20 shadow-xl overflow-hidden"
+                >
+                  <div className="aspect-[4/3] bg-amber-100 overflow-hidden">
+                    {viewingStory.panels[viewingPanelIndex]?.imageUrl ? (
+                      <img
+                        src={viewingStory.panels[viewingPanelIndex].imageUrl}
+                        alt="Comic panel"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Sparkles className="w-12 h-12 text-amber-300" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-5">
+                    <p className="font-handwriting text-xl text-amber-900 leading-snug">
+                      {viewingStory.panels[viewingPanelIndex]?.narration}
+                    </p>
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => setViewingPanelIndex((i) => Math.max(0, i - 1))}
+                  disabled={viewingPanelIndex === 0}
+                  className="w-12 h-12 rounded-full bg-amber-100 border-2 border-amber-300 flex items-center justify-center disabled:opacity-40"
+                >
+                  <ChevronLeft className="w-5 h-5 text-amber-900" />
+                </button>
+                <button
+                  onClick={() => setViewingPanelIndex((i) => Math.min(viewingStory.panels.length - 1, i + 1))}
+                  disabled={viewingPanelIndex === viewingStory.panels.length - 1}
+                  className="w-12 h-12 rounded-full bg-amber-100 border-2 border-amber-300 flex items-center justify-center disabled:opacity-40"
+                >
+                  <ChevronRight className="w-5 h-5 text-amber-900" />
+                </button>
+              </div>
+
+              {/* Dot indicators */}
+              <div className="flex justify-center gap-2">
+                {viewingStory.panels.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setViewingPanelIndex(i)}
+                    className={cn(
+                      "w-2 h-2 rounded-full transition-all",
+                      i === viewingPanelIndex ? "bg-amber-600 w-4" : "bg-amber-300"
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
