@@ -36,6 +36,7 @@ export class ComicOrchestrator {
     audioBase64?: string;
     audioMimeType?: string;
     imageUrl?: string;
+    narration?: string;
     theme?: string;
     isDone: boolean;
     error?: string;
