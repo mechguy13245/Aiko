@@ -571,7 +571,14 @@ export const ComicCreator = () => {
       `}</style>
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4">
+      <div className="flex items-center justify-end gap-3 px-4 pt-4">
+        <button
+          onClick={() => setIsMuted((m) => !m)}
+          className="text-amber-800/50 hover:text-amber-900 transition-colors"
+          title={isMuted ? "Unmute" : "Mute"}
+        >
+          {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+        </button>
         <button
           onClick={handleSignOut}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-white/60 hover:bg-white/90 text-amber-800/60 hover:text-amber-900 border border-amber-900/15 rounded-xl transition-all"
@@ -579,13 +586,6 @@ export const ComicCreator = () => {
         >
           <LogOut className="w-3.5 h-3.5" />
           Sign Out
-        </button>
-        <button
-          onClick={() => setIsMuted((m) => !m)}
-          className="text-amber-800/50 hover:text-amber-900 transition-colors"
-          title={isMuted ? "Unmute" : "Mute"}
-        >
-          {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
         </button>
       </div>
 
