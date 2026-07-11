@@ -561,7 +561,7 @@ export const ComicCreator = () => {
     const MARGIN = 10;
     const GAP = 6;
     const panelW = (W - MARGIN * 2 - GAP) / 2;
-    const captionH = 40;
+    const captionH = 52;
     const imgH = H - MARGIN * 2 - captionH;
 
     for (let i = 0; i < comicPanels.length; i += PANELS_PER_PAGE) {
@@ -612,18 +612,18 @@ export const ComicCreator = () => {
         doc.setDrawColor(120, 53, 15); doc.setLineWidth(1.5);
         doc.roundedRect(x, y, panelW, imgH, 4, 4);
 
-        // Caption strip
-        doc.setFillColor(254, 243, 199); // amber-50
+        // Caption strip — comic narration box style
+        doc.setFillColor(255, 252, 220); // bright yellow
         doc.rect(x, y + imgH, panelW, captionH, "F");
-        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1);
+        doc.setDrawColor(30, 30, 30); doc.setLineWidth(2);
         doc.rect(x, y + imgH, panelW, captionH);
 
-        // Caption text
-        doc.setTextColor(92, 40, 6);
-        doc.setFontSize(9);
-        doc.setFont("helvetica", "normal");
-        const words = doc.splitTextToSize(panel.caption || "", panelW - 8);
-        doc.text(words, x + panelW / 2, y + imgH + 7, { align: "center" });
+        // Caption text — bold italic, large, comic narration style
+        doc.setTextColor(20, 20, 20);
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bolditalic");
+        const words = doc.splitTextToSize(panel.caption || "", panelW - 12);
+        doc.text(words, x + panelW / 2, y + imgH + 12, { align: "center" });
       });
     }
 
@@ -650,7 +650,7 @@ export const ComicCreator = () => {
 
     const MARGIN = 10; const GAP = 6;
     const panelW = (W - MARGIN * 2 - GAP) / 2;
-    const captionH = 40;
+    const captionH = 52;
     const imgH = H - MARGIN * 2 - captionH;
 
     for (let i = 0; i < story.panels.length; i += 2) {
@@ -675,12 +675,12 @@ export const ComicCreator = () => {
         }
         doc.setDrawColor(120, 53, 15); doc.setLineWidth(1.5);
         doc.roundedRect(x, y, panelW, imgH, 4, 4);
-        doc.setFillColor(254, 243, 199); doc.rect(x, y + imgH, panelW, captionH, "F");
-        doc.setDrawColor(120, 53, 15); doc.setLineWidth(1);
+        doc.setFillColor(255, 252, 220); doc.rect(x, y + imgH, panelW, captionH, "F");
+        doc.setDrawColor(30, 30, 30); doc.setLineWidth(2);
         doc.rect(x, y + imgH, panelW, captionH);
-        doc.setTextColor(92, 40, 6); doc.setFontSize(9); doc.setFont("helvetica", "normal");
-        const words = doc.splitTextToSize(panel.narration || "", panelW - 8);
-        doc.text(words, x + panelW / 2, y + imgH + 7, { align: "center" });
+        doc.setTextColor(20, 20, 20); doc.setFontSize(13); doc.setFont("helvetica", "bolditalic");
+        const words = doc.splitTextToSize(panel.narration || "", panelW - 12);
+        doc.text(words, x + panelW / 2, y + imgH + 12, { align: "center" });
       });
     }
 
@@ -870,7 +870,7 @@ export const ComicCreator = () => {
                             <Sparkles className="w-20 h-20 text-amber-600" />
                           )}
                         </div>
-                        <p className="mt-5 text-2xl font-handwriting text-center text-amber-900/90">
+                        <p className="mt-5 text-3xl font-bold font-handwriting text-center text-amber-900 leading-snug">
                           {comicPanels[currentPanelIndex]?.caption}
                         </p>
                       </div>
