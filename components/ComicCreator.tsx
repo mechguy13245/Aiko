@@ -212,7 +212,7 @@ const MicButton = ({
         </button>
       </div>
       <p className="text-sm font-handwriting text-amber-900/70">
-        {isProcessing ? "Creating panel..." : isRecording ? "Listening..." : "Tap to Speak"}
+        {isProcessing ? "Creating panel..." : isRecording ? "Listening..." : "Speak anytime!"}
       </p>
     </div>
   );
@@ -246,6 +246,18 @@ export const ComicCreator = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const vadStreamRef = useRef<MediaStream | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vadActiveRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const isAikoSpeakingRef = useRef(false);
+
+  // Keep refs in sync so VAD callbacks can read current state without stale closures
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
+  useEffect(() => { isAikoSpeakingRef.current = isAikoSpeaking; }, [isAikoSpeaking]);
 
   const handleViewPastStories = async () => {
     setLoadingStories(true);
@@ -285,13 +297,16 @@ export const ComicCreator = () => {
       const openingText = "Hi! I'm so excited to hear your story! What's it about? 🌟";
       setMessages([{ id: "intro", text: openingText, isUser: false }]);
 
-      // Play hardcoded opening audio — instant, no TTS API call needed
+      // Play hardcoded opening audio then start VAD
+      const startVadAfterDelay = () => setTimeout(() => startListening(), 300);
       if (!isMuted) {
         const audio = new Audio("/opening-audio.wav");
         setIsAikoSpeaking(true);
-        audio.onended = () => setIsAikoSpeaking(false);
-        audio.onerror = () => setIsAikoSpeaking(false);
-        audio.play().catch(() => setIsAikoSpeaking(false));
+        audio.onended = () => { setIsAikoSpeaking(false); startVadAfterDelay(); };
+        audio.onerror = () => { setIsAikoSpeaking(false); startVadAfterDelay(); };
+        audio.play().catch(() => { setIsAikoSpeaking(false); startVadAfterDelay(); });
+      } else {
+        startListening();
       }
     } catch (error) {
       console.error("Failed to start comic session:", error);
@@ -301,35 +316,86 @@ export const ComicCreator = () => {
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current);
-        await handleSendAudio(audioBlob);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch {
-      setErrorMessage("Couldn't access microphone. Please allow microphone access.");
-    }
+  const stopVad = () => {
+    vadActiveRef.current = false;
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+    if (vadStreamRef.current) { vadStreamRef.current.getTracks().forEach((t) => t.stop()); vadStreamRef.current = null; }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+  const commitRecording = () => {
+    if (!mediaRecorderRef.current || !isRecordingRef.current) return;
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+    isRecordingRef.current = false;
+    mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+  };
+
+  const startVad = async (stream: MediaStream) => {
+    vadStreamRef.current = stream;
+    const ctx = new AudioContext();
+    audioContextRef.current = ctx;
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+
+    const VOICE_THRESHOLD = 18;   // 0–255 RMS; tuned for kids
+    const SILENCE_MS = 1400;      // ms of silence before sending
+
+    const tick = () => {
+      if (!vadActiveRef.current) return;
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = data[i] - 128; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length);
+
+      const blocked = isProcessingRef.current || isAikoSpeakingRef.current;
+
+      if (!blocked && rms > VOICE_THRESHOLD) {
+        // Voice detected
+        if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+
+        if (!isRecordingRef.current) {
+          // Start a fresh MediaRecorder on the same stream
+          const mr = new MediaRecorder(stream);
+          mediaRecorderRef.current = mr;
+          audioChunksRef.current = [];
+          mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+          mr.onstop = async () => {
+            const audioBlob = new Blob(audioChunksRef.current);
+            await handleSendAudio(audioBlob);
+          };
+          mr.start();
+          setIsRecording(true);
+          isRecordingRef.current = true;
+        }
+      } else if (isRecordingRef.current && !blocked) {
+        // Silence while recording — start countdown
+        if (!silenceTimerRef.current) {
+          silenceTimerRef.current = setTimeout(() => {
+            silenceTimerRef.current = null;
+            commitRecording();
+          }, SILENCE_MS);
+        }
+      }
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  };
+
+  const startListening = async () => {
+    if (vadActiveRef.current) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      vadActiveRef.current = true;
+      setIsListening(true);
+      await startVad(stream);
+    } catch {
+      setErrorMessage("Couldn't access microphone. Please allow microphone access.");
     }
   };
 
@@ -391,9 +457,12 @@ export const ComicCreator = () => {
                   const mimeType = retryData.audioMimeType || "audio/wav";
                   const audio = new Audio(`data:${mimeType};base64,${retryData.audioBase64}`);
                   setIsAikoSpeaking(true);
-                  audio.onended = () => setIsAikoSpeaking(false);
-                  audio.onerror = () => setIsAikoSpeaking(false);
+                  const onDone = () => { setIsAikoSpeaking(false); setTimeout(() => startListening(), 300); };
+                  audio.onended = onDone;
+                  audio.onerror = onDone;
                   audio.play();
+                } else {
+                  startListening();
                 }
                 if (retryData.imageUrl) {
                   const newPanel: ComicPanel = {
@@ -423,18 +492,22 @@ export const ComicCreator = () => {
               ]);
             }
 
-            // Play TTS audio
+            // Play TTS audio then resume VAD
             if (data.audioBase64 && !isMuted) {
               try {
                 const mimeType = data.audioMimeType || "audio/mpeg";
                 const audio = new Audio(`data:${mimeType};base64,${data.audioBase64}`);
                 setIsAikoSpeaking(true);
-                audio.onended = () => setIsAikoSpeaking(false);
-                audio.onerror = () => setIsAikoSpeaking(false);
+                const onDone = () => { setIsAikoSpeaking(false); setTimeout(() => startListening(), 300); };
+                audio.onended = onDone;
+                audio.onerror = onDone;
                 audio.play();
               } catch {
                 console.error("Audio playback failed");
+                startListening();
               }
+            } else {
+              startListening();
             }
 
             if (data.imageUrl) {
@@ -472,6 +545,9 @@ export const ComicCreator = () => {
   };
 
   const handleNewStory = async () => {
+    stopVad();
+    setIsListening(false);
+    setIsRecording(false);
     if (sessionId) {
       await fetch("/api/comic/session/reset", {
         method: "POST",
@@ -485,9 +561,11 @@ export const ComicCreator = () => {
     setCurrentPanelIndex(0);
     setSessionId(null);
     setIsDone(false);
-    setIsListening(false);
     setErrorMessage(null);
   };
+
+  // Cleanup VAD on unmount
+  useEffect(() => () => stopVad(), []);
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
@@ -620,7 +698,7 @@ export const ComicCreator = () => {
                         isRecording={isRecording}
                         isProcessing={isProcessing}
                         size="lg"
-                        onClick={isRecording ? stopRecording : startRecording}
+                        onClick={() => {}}
                       />
                     )}
 
@@ -740,7 +818,7 @@ export const ComicCreator = () => {
                       isRecording={isRecording}
                       isProcessing={isProcessing}
                       size="sm"
-                      onClick={isRecording ? stopRecording : startRecording}
+                      onClick={() => {}}
                     />
                   </div>
                 )}
