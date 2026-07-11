@@ -265,15 +265,12 @@ export const ComicCreator = () => {
     }
   };
 
-  // Auto-advance carousel
+  // Jump to latest panel whenever a new one is added
   useEffect(() => {
-    if (showSketchbook && comicPanels.length > 1) {
-      const timer = setInterval(() => {
-        setCurrentPanelIndex((prev) => (prev + 1) % comicPanels.length);
-      }, 4000);
-      return () => clearInterval(timer);
+    if (comicPanels.length > 0) {
+      setCurrentPanelIndex(comicPanels.length - 1);
     }
-  }, [showSketchbook, comicPanels.length]);
+  }, [comicPanels.length]);
 
   const handleStartChat = async () => {
     try {
@@ -448,8 +445,7 @@ export const ComicCreator = () => {
                   };
                   setComicPanels((prev) => {
                     const updated = [...prev, newPanel];
-                    if (updated.length === 1) { setShowSketchbook(true); setCurrentPanelIndex(0); }
-                    else setCurrentPanelIndex(updated.length - 1);
+                    if (updated.length === 1) setShowSketchbook(true);
                     return updated;
                   });
                 }
@@ -490,12 +486,7 @@ export const ComicCreator = () => {
               };
               setComicPanels((prev) => {
                 const updated = [...prev, newPanel];
-                if (updated.length === 1) {
-                  setShowSketchbook(true);
-                  setCurrentPanelIndex(0);
-                } else {
-                  setCurrentPanelIndex(updated.length - 1);
-                }
+                if (updated.length === 1) setShowSketchbook(true);
                 return updated;
               });
             }
