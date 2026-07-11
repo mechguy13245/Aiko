@@ -10,6 +10,11 @@ export class MemoryStore {
   private iterationCount: number = 0;
   private storyContext: string = "";
 
+  // Per-panel state — reset after each panel is committed
+  private panelTurns: number = 0;
+  private panelMessages: { role: "user" | "assistant"; content: string }[] = [];
+  private pendingNudgeHint: string = "";
+
   constructor(sessionId: string) {
     this.sessionId = sessionId;
   }
@@ -17,6 +22,7 @@ export class MemoryStore {
   addPanel(panel: ComicPanel) {
     this.panels.push(panel);
     this.updateContext(panel);
+    this.resetPanelState();
   }
 
   getAllPanels(): ComicPanel[] {
@@ -35,6 +41,37 @@ export class MemoryStore {
     return this.storyContext;
   }
 
+  // Per-panel turn tracking
+  incrementPanelTurns() {
+    this.panelTurns++;
+  }
+
+  getPanelTurns(): number {
+    return this.panelTurns;
+  }
+
+  addPanelMessage(role: "user" | "assistant", content: string) {
+    this.panelMessages.push({ role, content });
+  }
+
+  getPanelMessages(): { role: "user" | "assistant"; content: string }[] {
+    return this.panelMessages;
+  }
+
+  setPendingNudgeHint(hint: string) {
+    this.pendingNudgeHint = hint;
+  }
+
+  getPendingNudgeHint(): string {
+    return this.pendingNudgeHint;
+  }
+
+  resetPanelState() {
+    this.panelTurns = 0;
+    this.panelMessages = [];
+    this.pendingNudgeHint = "";
+  }
+
   private updateContext(panel: ComicPanel) {
     this.storyContext += `\nPanel ${this.iterationCount + 1}: ${panel.narration}`;
   }
@@ -43,6 +80,7 @@ export class MemoryStore {
     this.panels = [];
     this.iterationCount = 0;
     this.storyContext = "";
+    this.resetPanelState();
   }
 
   getSessionId(): string {

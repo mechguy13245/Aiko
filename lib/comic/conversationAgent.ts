@@ -4,7 +4,7 @@ import { SarvamAIClient } from "sarvamai";
 import { MemoryStore } from "./memoryStore";
 import {
   CONVERSATION_AGENT_SYSTEM_PROMPT,
-  CONVERSATION_AGENT_USER_PROMPT,
+  buildConversationUserPrompt,
 } from "./prompts/conversationAgent";
 
 const sarvam = new SarvamAIClient({
@@ -18,12 +18,12 @@ export class ConversationAgent {
     this.memoryStore = memoryStore;
   }
 
-  async chat(userMessage: string): Promise<{ text: string; audioBase64: string; audioMimeType: string }> {
+  async chat(
+    userMessage: string,
+    nudgeHint: string = ""
+  ): Promise<{ text: string; audioBase64: string; audioMimeType: string }> {
     const context = this.memoryStore.getStoryContext();
-
-    const prompt = CONVERSATION_AGENT_USER_PROMPT
-      .replace("{context}", context)
-      .replace("{userMessage}", userMessage);
+    const prompt = buildConversationUserPrompt(context, userMessage, nudgeHint);
 
     const { text } = await generateText({
       model: gateway("anthropic/claude-sonnet-4.6"),

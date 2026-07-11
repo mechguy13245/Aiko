@@ -2,6 +2,7 @@ import { ConversationAgent } from "./conversationAgent";
 import { StoryBuilder } from "./storyBuilder";
 import { ImageGenerator } from "./imageGenerator";
 import { MemoryStore } from "./memoryStore";
+import { classifyScene } from "./sceneJudge";
 import { uploadComicImage } from "./storageUploader";
 import { upsertComicSession, markComicSessionComplete } from "./dbStore";
 
@@ -71,12 +72,35 @@ export class ComicOrchestrator {
       return { response: "", isDone: false, error: "AUDIO_TOO_SHORT" };
     }
 
-    const [conversationResult, storyData] = await Promise.all([
-      this.conversationAgent.chat(userText),
-      this.storyBuilder.extractAndBuild(userText),
+    // Track this turn's message before running judge
+    this.memoryStore.addPanelMessage("user", userText);
+
+    const pendingNudgeHint = this.memoryStore.getPendingNudgeHint();
+
+    // Run conversation agent and scene judge in parallel
+    const [conversationResult, judgeResult] = await Promise.all([
+      this.conversationAgent.chat(userText, pendingNudgeHint),
+      classifyScene(this.memoryStore.getPanelMessages()),
     ]);
 
-    // Generate image then upload to Supabase Storage
+    this.memoryStore.incrementPanelTurns();
+    this.memoryStore.addPanelMessage("assistant", conversationResult.text);
+    this.memoryStore.setPendingNudgeHint(judgeResult.nudgeHint);
+
+    const panelTurns = this.memoryStore.getPanelTurns();
+    const panelReady = panelTurns >= 3 && judgeResult.isReady;
+
+    if (!panelReady) {
+      return {
+        response: conversationResult.text,
+        audioBase64: conversationResult.audioBase64,
+        audioMimeType: conversationResult.audioMimeType,
+        isDone: false,
+      };
+    }
+
+    // Scene is ready — generate panel
+    const storyData = await this.storyBuilder.extractAndBuild(userText);
     const rawImageUrl = await this.imageGenerator.generate(storyData.imagePrompt);
     const panelIndex = this.memoryStore.getIterationCount();
     let imageUrl = rawImageUrl;
@@ -92,7 +116,6 @@ export class ComicOrchestrator {
     this.memoryStore.addPanel({ narration: storyData.narration, imageUrl, userInput: userText });
     this.memoryStore.incrementIteration();
 
-    // Persist to DB after every panel
     upsertComicSession(this.sessionId, this.userId, this.memoryStore.getAllPanels()).catch(console.error);
 
     return {
