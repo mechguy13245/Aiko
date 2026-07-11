@@ -13,7 +13,9 @@ import {
   Download,
   BookOpen,
   X,
+  LogOut,
 } from "lucide-react";
+import { createClient } from "@/utils/supabase/client";
 import { jsPDF } from "jspdf";
 
 const cn = (...classes: (string | undefined | null | false)[]) =>
@@ -220,6 +222,12 @@ export const ComicCreator = () => {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut().catch(console.error);
+    window.location.href = "/auth";
+  };
   const [showSketchbook, setShowSketchbook] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [comicPanels, setComicPanels] = useState<ComicPanel[]>([]);
@@ -477,7 +485,15 @@ export const ComicCreator = () => {
       `}</style>
 
       {/* Header */}
-      <div className="flex items-center justify-end px-4 pt-4">
+      <div className="flex items-center justify-between px-4 pt-4">
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-white/60 hover:bg-white/90 text-amber-800/60 hover:text-amber-900 border border-amber-900/15 rounded-xl transition-all"
+          title="Sign out"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          Sign Out
+        </button>
         <button
           onClick={() => setIsMuted((m) => !m)}
           className="text-amber-800/50 hover:text-amber-900 transition-colors"
