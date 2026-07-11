@@ -100,11 +100,10 @@ export class ComicOrchestrator {
       };
     }
 
-    // Scene is ready — generate panel using the full panel conversation for richer context
+    // Scene is ready — pass full back-and-forth so StoryBuilder can attribute answers to questions
     const panelTranscript = this.memoryStore.getPanelMessages()
-      .filter((m) => m.role === "user")
-      .map((m) => m.content)
-      .join(" ");
+      .map((m) => `${m.role === "user" ? "Child" : "Aiko"}: ${m.content}`)
+      .join("\n");
     const storyData = await this.storyBuilder.extractAndBuild(panelTranscript);
     const rawImageUrl = await this.imageGenerator.generate(storyData.imagePrompt);
     const panelIndex = this.memoryStore.getIterationCount();
