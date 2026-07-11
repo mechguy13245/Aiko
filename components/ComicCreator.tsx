@@ -340,22 +340,28 @@ export const ComicCreator = () => {
       setIsRecording(true);
       setIsListening(false);
 
-      // Auto-stop after 1.5s of silence
-      const SILENCE_MS = 1500;
+      // Auto-stop after 3s of silence; require 800ms of speaking before timer can start
+      const SILENCE_MS = 3000;
       const VOICE_THRESHOLD = 15;
-      let speaking = false;
+      const MIN_SPEAKING_MS = 800;
+      let speakingMs = 0;
+      let lastTickTime = Date.now();
 
       const tick = () => {
         if (!audioContextRef.current) return;
+        const now = Date.now();
+        const elapsed = now - lastTickTime;
+        lastTickTime = now;
+
         analyser.getByteTimeDomainData(data);
         let sum = 0;
         for (let i = 0; i < data.length; i++) { const v = data[i] - 128; sum += v * v; }
         const rms = Math.sqrt(sum / data.length);
 
         if (rms > VOICE_THRESHOLD) {
-          speaking = true;
+          speakingMs += elapsed;
           if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-        } else if (speaking) {
+        } else if (speakingMs >= MIN_SPEAKING_MS) {
           if (!silenceTimerRef.current) {
             silenceTimerRef.current = setTimeout(() => {
               silenceTimerRef.current = null;
