@@ -37,7 +37,7 @@ export class ConversationAgent {
         text: text.slice(0, 2500),
         target_language_code: "en-IN",
         model: "bulbul:v3",
-        speaker: "shubh",
+        speaker: "ishita",
       });
 
       const audios = (ttsResponse as { audios?: string[] }).audios;
