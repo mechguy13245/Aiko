@@ -211,6 +211,7 @@ export const ComicCreator = () => {
   const [currentPanelIndex, setCurrentPanelIndex] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isAikoSpeaking, setIsAikoSpeaking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDone, setIsDone] = useState(false);
 
@@ -236,7 +237,17 @@ export const ComicCreator = () => {
       if (!res.ok) throw new Error(data.error || "Failed to start session");
 
       setSessionId(data.sessionId);
-      setMessages([{ id: "intro", text: data.message, isUser: false }]);
+      const openingText = "Hi! I'm so excited to hear your story! What's it about? 🌟";
+      setMessages([{ id: "intro", text: openingText, isUser: false }]);
+
+      // Play hardcoded opening audio — instant, no TTS API call needed
+      if (!isMuted) {
+        const audio = new Audio("/opening-audio.wav");
+        setIsAikoSpeaking(true);
+        audio.onended = () => setIsAikoSpeaking(false);
+        audio.onerror = () => setIsAikoSpeaking(false);
+        audio.play().catch(() => setIsAikoSpeaking(false));
+      }
     } catch (error) {
       console.error("Failed to start comic session:", error);
       setErrorMessage("Couldn't start the session. Please try again.");
@@ -328,9 +339,10 @@ export const ComicCreator = () => {
               try {
                 const mimeType = data.audioMimeType || "audio/mpeg";
                 const audio = new Audio(`data:${mimeType};base64,${data.audioBase64}`);
+                setIsAikoSpeaking(true);
+                audio.onended = () => setIsAikoSpeaking(false);
+                audio.onerror = () => setIsAikoSpeaking(false);
                 audio.play();
-                setIsListening(true);
-                audio.onended = () => setIsListening(false);
               } catch {
                 console.error("Audio playback failed");
               }
@@ -470,7 +482,7 @@ export const ComicCreator = () => {
                 <SketchbookBorder isVisible />
 
                 <div className="relative flex flex-col items-center gap-6">
-                  <CartoonCharacter isSpeaking={isListening} />
+                  <CartoonCharacter isSpeaking={isAikoSpeaking || isListening} />
 
                   <div className="flex flex-col items-center gap-4 w-full relative">
                     {/* Error bubble */}
