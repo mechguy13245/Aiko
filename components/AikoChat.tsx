@@ -120,11 +120,23 @@ export const AikoChat = () => {
 
     async function loadSession() {
       try {
-        // Check saved class range first — Class 1 users route to ComicCreator
+        // Fast local check first — avoids a round-trip on re-login
+        const localRange = typeof window !== "undefined"
+          ? localStorage.getItem("aiko_class_range")
+          : null;
+        if (localRange === "class-1") {
+          setSavedAge("class-1");
+          setScreen("comic");
+          setLoadingProfile(false);
+          return;
+        }
+
+        // DB check — authoritative source (cross-device, post-logout)
         const crRes = await fetch("/api/class-range");
         if (crRes.ok) {
           const crData = await crRes.json();
           if (crData.classRange === "class-1") {
+            localStorage.setItem("aiko_class_range", "class-1");
             setSavedAge("class-1");
             setScreen("comic");
             setLoadingProfile(false);
@@ -241,17 +253,15 @@ export const AikoChat = () => {
   }, [screen, selectedAge, messages.length]);
 
   const startComic = async () => {
+    // Persist immediately (sync) so re-login always restores to comic screen
+    if (typeof window !== "undefined") localStorage.setItem("aiko_class_range", "class-1");
     setSavedAge("class-1");
     setScreen("comic");
-    try {
-      await fetch("/api/class-range", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ classRange: "class-1" }),
-      });
-    } catch (err) {
-      console.error("Failed to save class range:", err);
-    }
+    fetch("/api/class-range", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classRange: "class-1" }),
+    }).catch((err) => console.error("Failed to save class range to DB:", err));
   };
 
   const startConversation = async (age: string) => {
@@ -435,9 +445,9 @@ export const AikoChat = () => {
     return (
       <ComicCreator
         onBack={() => {
+          if (typeof window !== "undefined") localStorage.removeItem("aiko_class_range");
           setScreen("landing");
           setSavedAge(null);
-          // Clear class-1 from profile so they can pick again next time
           fetch("/api/class-range", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
