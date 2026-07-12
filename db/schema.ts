@@ -24,6 +24,14 @@ export const aikoSessions = pgTable("aiko_sessions", {
   completedAt: timestamp("completed_at"),
 });
 
+export const comicStorySessions = pgTable("comic_story_sessions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  panels: jsonb("panels").notNull().default([]),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
 // Audit log: every time a moderation flag fires, a row lands here.
 // Intentionally append-only — no updates, no deletes.
 // NOTE(product): review/notification workflow still pending product decision.
